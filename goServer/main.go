@@ -10,12 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/blocto/solana-go-sdk/common"
 	"github.com/blocto/solana-go-sdk/program/metaplex/token_metadata"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/go-redis/redis"
+	holders "github.com/thankgod20/scraperServer/Holders"
 )
 
 const (
@@ -30,6 +32,14 @@ type NFTMetadata struct {
 	Name   string `json:"name"`
 	Symbol string `json:"symbol"`
 	URI    string `json:"uri"`
+}
+type NullTime struct {
+	time.Time
+}
+type Transfer struct {
+	Address string   `json:"address"`
+	Amount  float64  `json:"amount"`
+	Time    NullTime `json:"time"`
 }
 
 var RedisClient *redis.Client
@@ -58,9 +68,41 @@ type APIResponse struct {
 }
 
 // Handler to fetch keys and data
+func fetchHolderKeysAndDataHandler(w http.ResponseWriter, r *http.Request) {
+	searchWord := r.URL.Query().Get("search") //"4x77NhFuVzWWDGEMUyB17e3nhvVdkV7HT2AZNmz6pump"
+	pattern := fmt.Sprintf("%s", searchWord)
+	fmt.Println("Partern", pattern)
+
+	// Create a new BitqueryClient.
+	client := holders.NewBitqueryClient()
+
+	// Fetch transfer data, update the JSON file, and get its content.
+	output, err := client.UpdateAndGetTransfers(pattern)
+	if err != nil {
+		log.Fatalf("Error updating and getting transfers: %v", err)
+	}
+	var transfers []Transfer
+	if err := json.Unmarshal([]byte(output), &transfers); err != nil {
+		log.Fatalf("Error decoding transfers: %v", err)
+	}
+	// If no values were found, return an appropriate response
+	if len(transfers) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "No matching keys found"})
+		return
+	}
+
+	// Send the response
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(transfers); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
+// Handler to fetch keys and data
 func fetchKeysAndDataHandler(w http.ResponseWriter, r *http.Request) {
 	searchWord := r.URL.Query().Get("search") //"4x77NhFuVzWWDGEMUyB17e3nhvVdkV7HT2AZNmz6pump"
-	pattern := fmt.Sprintf("*%s*", searchWord)
+	pattern := fmt.Sprintf("*spltoken:%s*", searchWord)
 
 	// Get all keys matching the pattern
 	keys, err := RedisClient.Keys(pattern).Result()
@@ -113,6 +155,8 @@ func main() {
 	http.HandleFunc("/api/token-metadata", withCORS(getTokenMetadata))
 
 	http.HandleFunc("/fetch-data", withCORS(fetchKeysAndDataHandler))
+	http.HandleFunc("/fetch-holders", withCORS(fetchHolderKeysAndDataHandler))
+
 	staticPath := filepath.Join("..", "static")
 	fs := http.FileServer(http.Dir(staticPath))
 	http.Handle("/static/", withCORSStat(http.StripPrefix("/static/", fs)))

@@ -1,12 +1,32 @@
 [
   {
-    "address": "HPgsCBk6gkTw5FFPYc9WeeBU8EU2Ye1AYmeTYq5apump",
-    "name": "ALINA AI",
-    "symbol": "ALINAintel"
+    "address": "Abp3VXNTB192BQ7Lo1sjFx8CEWbMSK21b3nZ85w4pump",
+    "name": "Word",
+    "symbol": "Word",
+    "index": 0
   },
   {
-    "address": "DD8GJwAZHZZsLEtKnxdWfm8JbBhUj1oVwiGigfPUpump",
-    "name": "CGAI",
-    "symbol": "CGAI"
+    "address": "J5PATRAQDExWnMRMhdj8Av9Lmgkpms7DuYFaGN8Wpump",
+    "name": "SOL Trollface meme",
+    "symbol": "Trollface",
+    "index": 2
+  },
+  {
+    "address": "5EFNnrTPuhP5i4LZ6ndT5znjE25aY3Cg1RYNRowofzoz",
+    "name": "LYNAI",
+    "symbol": "$LYNAI",
+    "index": 1
+  },
+  {
+    "address": "Abp3VXNTB192BQ7Lo1sjFx8CEWbMSK21b3nZ85w4pump",
+    "name": "Word",
+    "symbol": "Word",
+    "index": 3
+  },
+  {
+    "address": "Abp3VXNTB192BQ7Lo1sjFx8CEWbMSK21b3nZ85w4pump",
+    "name": "Word",
+    "symbol": "Word",
+    "index": 5
   }
 ]

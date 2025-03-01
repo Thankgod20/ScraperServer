@@ -218,17 +218,33 @@ func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, c
 	} else {
 		fmt.Println("Login successful: User is authenticated.")
 	}
+	fmt.Println("Browser index", index)
 	var query []AddressEntry
 	searchURL := "" //twitterSearchURL + query[index]
 
+	forMe := false
+	var q_index int
+	//outer:
 	for {
 		for qu := range query_ { // Listen for messages from the broadcast channel
 			query = qu
 			fmt.Println("Searched Quert", query, "index", index, " SS", len(query))
-			break
+			for i, qux := range qu {
+				if qux.Index == int64(index) {
+					forMe = true
+					q_index = i
+					break
+				}
+			}
+			if forMe {
+				break
+			}
 		}
-		if len(query) > index {
+		/*if len(query) > index {
 			fmt.Println("Breaking")
+			break
+		}*/
+		if forMe {
 			break
 		}
 	}
@@ -237,21 +253,21 @@ func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, c
 	// Subtract 24 hours to get yesterday's date
 	yesterday := now.Add(-24 * time.Hour)
 	yesterdate := yesterday.Format("2006-01-02")
-	searchURL = fmt.Sprintf(`%s%s OR "%s" OR "$%s" since:%s`, twitterSearchURL, query[index].Address, query[index].Name, query[index].Symbol, yesterdate) //twitterSearchURL + query[index].Address + " OR " + query[index].Name + " since:" + yesterdate
+	searchURL = fmt.Sprintf(`%s%s  OR "$%s" since:%s`, twitterSearchURL, query[q_index].Address, query[q_index].Symbol, yesterdate) //twitterSearchURL + query[index].Address + " OR " + query[index].Name + " since:" + yesterdate
 	err = wd.Get(searchURL)
 	if err != nil {
 		log.Printf("Failed to load Twitter search page: %v", err)
 	}
-	fmt.Println("Searched Query Completed", query[index], "Of Brower:-", index)
+	fmt.Println("Searched Query Completed", query[q_index], "Of Brower:-", index)
 
 	time.Sleep(5 * time.Second)
-	n_index := index
+	n_index := q_index
 	for i := 0; i < 1000; i++ {
 		fmt.Println()
 		timeCount := 2 * (i + 1)
 		currentTime := time.Now().UTC()
 		waitForPageLoad(wd)
-		scrapeAndSaveTweet(query[n_index].Address, wd, int64(timeCount), currentTime)
+		scrapeAndSaveTweet(query[n_index].Address, wd, int64(timeCount), currentTime, int64(index))
 		time.Sleep(2 * time.Minute)
 		if err := wd.Refresh(); err != nil {
 			log.Printf("Error refreshing page: %v", err)
@@ -262,12 +278,20 @@ func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, c
 		select {
 		case query_ := <-query_:
 			// Successfully received a value from the channel
-			if len(query_) > totalNode {
-				fmt.Println("== Adjusting to New Query ===")
-				n_index = (len(query_) - totalNode) + index
-				if len(query_) > n_index {
+			qn_index := -1
+			for i, qux := range query_ {
+				if qux.Index == int64(index) {
+
+					qn_index = i
+				}
+			}
+			if len(query_) > totalNode && qn_index > -1 {
+
+				fmt.Println("== Adjusting to New Query ===Index", qn_index, "Brower Index:-", index)
+				n_index = qn_index                         //(len(query_) - totalNode) + index
+				if query_[n_index].Index == int64(index) { //if len(query_) > n_index {
 					i = 0
-					searchURL := fmt.Sprintf(`%s%s OR "%s" OR "$%s" since:%s`, twitterSearchURL, query_[n_index].Address, query_[n_index].Name, query_[n_index].Symbol, yesterdate) // twitterSearchURL + query[index].Address + " OR " + query[index].Name + " since:" + yesterdate
+					searchURL := fmt.Sprintf(`%s%s OR  "$%s" since:%s`, twitterSearchURL, query_[n_index].Address, query_[n_index].Symbol, yesterdate) // twitterSearchURL + query[index].Address + " OR " + query[index].Name + " since:" + yesterdate
 					err = wd.Get(searchURL)
 					if err != nil {
 						log.Printf("Failed to load Twitter search page: %v", err)
@@ -278,12 +302,21 @@ func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, c
 			}
 		default:
 			// No value available, avoid waiting
-			if len(query) > totalNode {
-				fmt.Println("== Adjusting to New Query ===")
-				n_index = (len(query) - totalNode) + index
+			qn_index := -1
+			for x, qux_ := range query {
+				if qux_.Index == int64(index) {
+
+					qn_index = x
+
+				}
+			}
+			if len(query) > totalNode && qn_index > -1 {
+
+				fmt.Println("== Adjusting to Forgotten Query === Index", qn_index, "Brower Index:-", index)
+				n_index = qn_index //(len(query) - totalNode) + index
 				i = 0
-				if len(query) > n_index {
-					searchURL := fmt.Sprintf(`%s%s OR "%s" OR "$%s" since:%s`, twitterSearchURL, query[n_index].Address, query[n_index].Name, query[n_index].Symbol, yesterdate) //twitterSearchURL + query[index].Address + " OR " + query[index].Name + " since:" + yesterdate
+				if query[n_index].Index == int64(index) {
+					searchURL := fmt.Sprintf(`%s%s OR  "$%s" since:%s`, twitterSearchURL, query[n_index].Address, query[n_index].Symbol, yesterdate) //twitterSearchURL + query[index].Address + " OR " + query[index].Name + " since:" + yesterdate
 					err = wd.Get(searchURL)
 					if err != nil {
 						log.Printf("Failed to load Twitter search page: %v", err)
@@ -570,7 +603,7 @@ func getText(elem selenium.WebElement, selector string) string {
 	return text
 }
 
-func scrapeAndSaveTweet(query string, wd selenium.WebDriver, timeCount int64, plot_time time.Time) {
+func scrapeAndSaveTweet(query string, wd selenium.WebDriver, timeCount int64, plot_time time.Time, index int64) {
 
 	var allTweets []selenium.WebElement
 	var previousTweetCount int
@@ -602,7 +635,7 @@ func scrapeAndSaveTweet(query string, wd selenium.WebDriver, timeCount int64, pl
 			}
 
 			if !containstring(allstatus, statusURL) {
-				fmt.Println("=== Twitte Ecist")
+				fmt.Println("=== Twitte Ecist for Brower:-", index, " Query:-", query)
 				allstatus = append(allstatus, statusURL)
 				getElementData(query, tweets, timeCount, plot_time, redis_client)
 			}
@@ -721,6 +754,7 @@ type AddressEntry struct {
 	Address string `json:"address"`
 	Name    string `json:"name"`
 	Symbol  string `json:"symbol"`
+	Index   int64  `json:"index"`
 }
 type CookieEntry struct {
 	Address string `json:"cookies"`
@@ -842,7 +876,7 @@ func main() {
 		for _, entry := range addressArray {
 			if !containAddress(addrArray, entry) {
 				addrArray = append(addrArray, entry)
-				fmt.Println("Address", addrArray)
+				fmt.Println("Address List", addrArray)
 			}
 		}
 		cookiesArray := readJSONFileCookie("datacenter/cookies.json")

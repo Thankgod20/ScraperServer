@@ -15,6 +15,7 @@ type Address struct {
 	Address string `json:"address"`
 	Name    string `json:"name"`
 	Symbol  string `json:"symbol"`
+	Index   int64  `json:"index"`
 }
 type Cookies struct {
 	Address string `json:"cookies"`
@@ -203,13 +204,28 @@ func AddAddress() {
 		}
 
 		input = strings.TrimSpace(input) // Remove newline and extra spaces
-
 		if input == "done" {
 			break
 		}
-		metaData := getTokenMetadata(input)
+		fmt.Print("Enter Index Number: ")
+
+		indexInput, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Println("Error reading input:", err)
+			return
+		}
+
+		indexInput = strings.TrimSpace(indexInput)
+
+		index, err := strconv.ParseInt(indexInput, 10, 64)
+		if err != nil {
+			fmt.Println("Error reading input:", err)
+			return
+		}
+
+		metaData := getTokenMetadata(input, index)
 		if input != "" {
-			addresses = append(addresses, Address{Address: input, Name: metaData.Name, Symbol: metaData.Symbol})
+			addresses = append(addresses, Address{Address: input, Name: metaData.Name, Symbol: metaData.Symbol, Index: index})
 		}
 	}
 
@@ -242,7 +258,7 @@ func AddAddress() {
 
 	fmt.Println("Addresses saved to", outputPath)
 }
-func getTokenMetadata(token string) *TokenMetadata {
+func getTokenMetadata(token string, index int64) *TokenMetadata {
 	url := fmt.Sprintf("http://localhost:3300/api/token-metadata?mint=%s", token)
 
 	resp, err := http.Get(url)
@@ -266,7 +282,7 @@ func getTokenMetadata(token string) *TokenMetadata {
 		}
 
 		// Print the response
-		fmt.Printf("Name: %s\nSymbol: %s\nURI: %s\n", metadata.Name, metadata.Symbol, metadata.URI)
+		fmt.Printf("Name: %s\nSymbol: %s\nURI: %s\nIndex: %d\n", metadata.Name, metadata.Symbol, metadata.URI, index)
 		return &metadata
 	} else {
 		fmt.Printf("Failed to fetch data. Status code: %d\n", resp.StatusCode)
