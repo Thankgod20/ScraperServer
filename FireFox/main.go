@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,7 @@ import (
 )
 
 const (
-	geckoDriverPath  = "./geckodriver" // Update this with your GeckoDriver path for Firefox
+	chromedriverPath = "./chromedriver" // Update this with your ChromeDriver path for Termux
 	twitterSearchURL = "https://x.com/search?q="
 )
 
@@ -37,17 +38,21 @@ type Address struct {
 
 var usedIndex int
 
-// generateUniqueFingerprint configures Firefox capabilities.
-// It sets headless mode, overrides the user agent, and configures a manual proxy if provided.
+// generateUniqueFingerprint configures Chrome capabilities for Android.
+// It sets required options and an experimental "androidPackage" for Chromium.
 func generateUniqueFingerprint(userAgent, proxy string) selenium.Capabilities {
-	caps := selenium.Capabilities{"browserName": "firefox"}
-	firefoxOptions := map[string]interface{}{
-		"args": []string{"-headless"}, // Headless mode for Firefox
+	caps := selenium.Capabilities{"browserName": "chrome"}
+	chromeOptions := map[string]interface{}{
+		"args": []string{
+			"--no-sandbox",
+			"--disable-dev-shm-usage",
+		},
+		"androidPackage": "org.chromium.chrome.stable",
 		"prefs": map[string]interface{}{
 			"general.useragent.override": userAgent,
 		},
 	}
-	caps["moz:firefoxOptions"] = firefoxOptions
+	caps["goog:chromeOptions"] = chromeOptions
 
 	if proxy != "" {
 		caps["proxy"] = map[string]interface{}{
@@ -119,12 +124,12 @@ func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, c
 		log.Fatalf("Failed to get a random port: %v", err)
 	}
 	fmt.Printf("Using random port: %d\n", port)
-	// Start a GeckoDriver (Firefox) service
+	// Start a ChromeDriver service for Chromium on Termux via ADB.
 	opts := []selenium.ServiceOption{}
-	service, err := selenium.NewGeckoDriverService(geckoDriverPath, port, opts...)
+	service, err := selenium.NewChromeDriverService(chromedriverPath, port, opts...)
 	if err != nil {
-		log.Printf("Error starting GeckoDriver service: %v", err)
-		resultChan <- Result{Index: index, Success: false, ErrorMsg: fmt.Sprintf("Error starting GeckoDriver service: %v", err)}
+		log.Printf("Error starting ChromeDriver service: %v", err)
+		resultChan <- Result{Index: index, Success: false, ErrorMsg: fmt.Sprintf("Error starting ChromeDriver service: %v", err)}
 		return
 	}
 	defer service.Stop()
@@ -685,6 +690,15 @@ func readJSONFile(filePath string) []AddressEntry {
 }
 
 func main() {
+	// Optional: Run ADB devices command to ensure your Android device is connected.
+	cmd := exec.Command("adb", "devices")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("Error running adb devices: %v", err)
+	} else {
+		fmt.Printf("ADB devices output:\n%s\n", out)
+	}
+
 	var addrArray []AddressEntry
 	var cookArray []string
 	var prxArray []string
@@ -743,7 +757,7 @@ func main() {
 			proxyParts := strings.Split(randomProxy, ":")
 			ipAddress := proxyParts[0]
 			port := proxyParts[1]
-			// For Firefox, we set the proxy directly in capabilities.
+			// For Chrome, we set the proxy in capabilities.
 			proxyStr := fmt.Sprintf("%s:%s", ipAddress, port)
 			thecookies := cookies[rndInput]
 			semaphore <- struct{}{}
