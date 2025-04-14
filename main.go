@@ -41,7 +41,7 @@ type Address struct {
 
 var usedIndex int
 
-func generateUniqueFingerprint(proxyExtension string, userAgents string) selenium.Capabilities {
+func generateUniqueFingerprint(proxyExtension string, userAgents string, instanceID int) selenium.Capabilities {
 
 	randomUserAgent := userAgents
 	fmt.Println("Extensions", proxyExtension)
@@ -51,14 +51,23 @@ func generateUniqueFingerprint(proxyExtension string, userAgents string) seleniu
 	caps["goog:chromeOptions"] = map[string]interface{}{
 		"args": []string{"--headless", "--no-sandbox", "--disable-dev-shm-usage"},
 	}
+	//userDataDir := fmt.Sprintf("/data/data/com.termux/files/home/chrome_profile_%d", instanceID)
+
 	chromeCaps := chrome.Capabilities{
 		Prefs: map[string]interface{}{},
 		Args: []string{
 			fmt.Sprintf("--user-agent=%s", randomUserAgent),
-			"--headless",    // Enables headless mode
-			"--disable-gpu", // Disables GPU acceleration (required for some environments)
-			"--no-sandbox",  // Required in some Docker environments
-			"--disable-dev-shm-usage",
+
+			"--headless",              // Run in headless mode.
+			"--disable-gpu",           // Disable GPU acceleration.
+			"--no-sandbox",            // Necessary in many containerized/limited environments.
+			"--disable-dev-shm-usage", // Avoid issues with limited /dev/shm space.
+			"--incognito",             // Use incognito mode to reduce profile overhead.
+			"--disable-background-networking",
+			"--disable-sync",
+			"--disable-translate",
+			"--no-first-run",
+			//fmt.Sprintf("--user-data-dir=%s", userDataDir),
 		},
 		Extensions: []string{proxyExtension},
 	}
@@ -121,12 +130,71 @@ func isPortAvailable(port int) bool {
 	defer listener.Close()
 	return true
 }
+
+type SessionStatus struct {
+	ID      int    `json:"id"`
+	Port    int    `json:"port"`
+	Status  string `json:"status"`
+	Updated string `json:"updated"`
+}
+
+func updateSessionStatus(id int, port int, status string) error {
+	filePath := "./datacenter/activesession.json"
+
+	// Ensure datacenter directory exists
+	if err := os.MkdirAll("./datacenter", os.ModePerm); err != nil {
+		return err
+	}
+
+	var sessions []SessionStatus
+	// Read existing sessions if the file exists
+	if data, err := ioutil.ReadFile(filePath); err == nil {
+		if err := json.Unmarshal(data, &sessions); err != nil {
+			log.Printf("Warning: could not unmarshal existing sessions: %v", err)
+		}
+	}
+	if status == "New" {
+		sessions = []SessionStatus{}
+	}
+	// Check if a session with the same ID exists
+	found := false
+	now := time.Now().Format(time.RFC3339)
+	for i, s := range sessions {
+		if s.ID == id {
+			sessions[i].Port = port
+			sessions[i].Status = status
+			sessions[i].Updated = now
+			found = true
+			break
+		}
+	}
+	if !found {
+		newSession := SessionStatus{
+			ID:      id,
+			Port:    port,
+			Status:  status,
+			Updated: now,
+		}
+		sessions = append(sessions, newSession)
+	}
+
+	// Marshal back to JSON and write to file
+	out, err := json.MarshalIndent(sessions, "", "  ")
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(filePath, out, 0644)
+}
 func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, caps selenium.Capabilities, cookies_ string, resultChan chan Result) {
 	//defer wg.Done() // Mark this goroutine as done when it finishes
 	port, err := getRandomPort()
 	if err != nil {
 		log.Fatalf("Failed to get a random port: %v", err)
 	}
+	if err := updateSessionStatus(index, port, "inactive"); err != nil {
+		log.Printf("Failed to update session status: %v", err)
+	}
+
 	fmt.Printf("Using random port: %d\n", port)
 	// Start a WebDriver instance
 	opts := []selenium.ServiceOption{}
@@ -208,8 +276,11 @@ func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, c
 	_, err = wd.FindElement(selenium.ByCSSSelector, "[data-testid='AppTabBar_Home_Link']")
 	if err != nil {
 
-		if currentURL == "https://twitter.com/?mx=2" || currentURL == "https://x.com/?mx=2" {
+		if currentURL == "https://twitter.com/?mx=2" || currentURL == "https://x.com/?mx=2" || strings.Contains(currentURL, "https://x.com/i/flow/login") {
 			fmt.Println("Login unsuccessful: Redirected back to the login page.")
+			if err := updateSessionStatus(index, port, "inactive"); err != nil {
+				log.Printf("Failed to update session status: %v", err)
+			}
 			fmt.Println("Login unsuccessful: Could not find logged-in element.", cookies_)
 			resultChan <- Result{Index: index, Success: false, ErrorMsg: "Redirected back to login page."}
 			return
@@ -221,7 +292,9 @@ func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, c
 	fmt.Println("Browser index", index)
 	var query []AddressEntry
 	searchURL := "" //twitterSearchURL + query[index]
-
+	if err := updateSessionStatus(index, port, "active"); err != nil {
+		log.Printf("Failed to update session status: %v", err)
+	}
 	forMe := false
 	var q_index int
 	//outer:
@@ -259,14 +332,33 @@ func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, c
 		log.Printf("Failed to load Twitter search page: %v", err)
 	}
 	fmt.Println("Searched Query Completed", query[q_index], "Of Brower:-", index)
+	time.Sleep(5 * time.Second)
+	currentURL, _ = wd.CurrentURL()
+	// current url
+	if strings.Contains(currentURL, "https://x.com/i/flow/login") {
+		fmt.Println("Login unsuccessful: Redirected back to the login page.")
+		if err := updateSessionStatus(index, port, "inactive"); err != nil {
+			log.Printf("Failed to update session status: %v", err)
+		}
+		fmt.Println("Login unsuccessful: Could not find logged-in element.", cookies_)
+		resultChan <- Result{Index: index, Success: false, ErrorMsg: "Redirected back to login page."}
+		return
 
+	}
 	time.Sleep(5 * time.Second)
 	n_index := q_index
+	if err := updateSessionStatus(index, port, "active"); err != nil {
+		log.Printf("Failed to update session status: %v", err)
+	}
+
 	for i := 0; i < 1000; i++ {
 		fmt.Println()
 		timeCount := 2 * (i + 1)
 		currentTime := time.Now().UTC()
 		waitForPageLoad(wd)
+		if err := updateSessionStatus(index, port, "Running "+query[n_index].Address); err != nil {
+			log.Printf("Failed to update session status: %v", err)
+		}
 		scrapeAndSaveTweet(query[n_index].Address, wd, int64(timeCount), currentTime, int64(index))
 		time.Sleep(2 * time.Minute)
 		if err := wd.Refresh(); err != nil {
@@ -290,6 +382,9 @@ func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, c
 				fmt.Println("== Adjusting to New Query ===Index", qn_index, "Brower Index:-", index)
 				n_index = qn_index                         //(len(query_) - totalNode) + index
 				if query_[n_index].Index == int64(index) { //if len(query_) > n_index {
+					if err := updateSessionStatus(index, port, "Running Updated "+query_[n_index].Address); err != nil {
+						log.Printf("Failed to update session status: %v", err)
+					}
 					i = 0
 					searchURL := fmt.Sprintf(`%s%s OR  "$%s" since:%s`, twitterSearchURL, query_[n_index].Address, query_[n_index].Symbol, yesterdate) // twitterSearchURL + query[index].Address + " OR " + query[index].Name + " since:" + yesterdate
 					err = wd.Get(searchURL)
@@ -327,6 +422,9 @@ func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, c
 			fmt.Println("No value in the channel")
 		}
 
+	}
+	if err := updateSessionStatus(index, port, "Inactive"); err != nil {
+		log.Printf("Failed to update session status: %v", err)
 	}
 	resultChan <- Result{Index: index, Success: true, ErrorMsg: ""}
 
@@ -871,6 +969,9 @@ func main() {
 		wg.Wait()
 		//close(addArryChn)
 	}()
+	if err := updateSessionStatus(0, 0, "New"); err != nil {
+		log.Printf("Failed to update session status: %v", err)
+	}
 	for {
 		addressArray := readJSONFile("addresses/address.json")
 		for _, entry := range addressArray {
@@ -932,7 +1033,7 @@ func main() {
 				extent := createProxyExtension(ipAddress_, port_, "uyxzmtjn", "ietipyjz5ls7")
 
 				fmt.Printf("Starting scrape with fingerprint %d\n", index_)
-				caps := generateUniqueFingerprint(extent, randomUserAgent_)
+				caps := generateUniqueFingerprint(extent, randomUserAgent_, index_)
 				scrapeTwitterSearch(query_, index_, len(cookiesArray), caps, cookies, resultChan)
 
 			}(ipAddress, port, addArryChn, randomUserAgent, thecookies, username, password, index)

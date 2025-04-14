@@ -1,0 +1,11 @@
+version: "3"
+agent:
+    authtoken: 2C45uFlAhRlWG8sa3DcX4UyOMFs_62kD95ZBw8vT5UgJpRLdD #7HKfxNqQ2Nqj1CBaj7Edz_38czuFxKRg7kcc28rgUVK
+tunnels:
+  flask:
+    proto: http
+    addr: 8000
+  redis:
+    proto: tcp
+    addr: 6379
+

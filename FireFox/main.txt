@@ -1,15 +1,20 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -39,26 +44,206 @@ var usedIndex int
 
 // generateUniqueFingerprint configures Firefox capabilities.
 // It sets headless mode, overrides the user agent, and configures a manual proxy if provided.
+/*
 func generateUniqueFingerprint(userAgent, proxy string) selenium.Capabilities {
 	caps := selenium.Capabilities{"browserName": "firefox"}
 	firefoxOptions := map[string]interface{}{
-		"args": []string{"-headless"}, // Headless mode for Firefox
+		"args": []string{"-headless"}, // Use headless mode if desired
 		"prefs": map[string]interface{}{
 			"general.useragent.override": userAgent,
 		},
 	}
 	caps["moz:firefoxOptions"] = firefoxOptions
 
+	fmt.Println("Proxies:", proxy)
 	if proxy != "" {
-		caps["proxy"] = map[string]interface{}{
-			"proxyType": "manual",
-			"httpProxy": proxy,
-			"sslProxy":  proxy,
+		parts := strings.Split(proxy, ":")
+		if len(parts) == 4 {
+			ip := parts[0]
+			port := parts[1]
+			username := parts[2]
+			password := parts[3]
+			// Set proxy without credentials; Firefox expects "host:port"
+			proxyStr := fmt.Sprintf("%s:%s", ip, port)
+			caps["proxy"] = map[string]interface{}{
+				"proxyType": "manual",
+				"httpProxy": proxyStr,
+				"sslProxy":  proxyStr,
+			}
+			// Create a proxy extension that handles authentication
+			extensionPath := createFirefoxProxyExtension(ip, port, username, password)
+			// Read the extension file and encode it in base64
+			extContent, err := ioutil.ReadFile(extensionPath)
+			if err != nil {
+				panic(fmt.Sprintf("Error reading extension file: %v", err))
+			}
+			encodedExt := base64.StdEncoding.EncodeToString(extContent)
+			// Add the encoded extension to the Firefox options.
+			firefoxOptions["extensions"] = []string{encodedExt}
+			fmt.Println("Proxy configured with authentication extension loaded.")
+		} else {
+			// Fallback for proxies without authentication details.
+			fmt.Println("Proxies:", proxy)
+			caps["proxy"] = map[string]interface{}{
+				"proxyType": "manual",
+				"httpProxy": proxy,
+				"sslProxy":  proxy,
+			}
 		}
 	}
 	return caps
+}*/
+func createFirefoxProfileWithExtension(extensionPath string) (string, error) {
+	// Create a temporary profile directory.
+	profileDir, err := ioutil.TempDir("", "firefox_profile")
+	if err != nil {
+		return "", fmt.Errorf("error creating firefox profile directory: %v", err)
+	}
+
+	// Create the "extensions" folder.
+	extensionsDir := filepath.Join(profileDir, "extensions")
+	err = os.Mkdir(extensionsDir, 0755)
+	if err != nil {
+		return "", fmt.Errorf("error creating extensions directory: %v", err)
+	}
+
+	// Copy the extension into the profile's extensions folder.
+	destExtPath := filepath.Join(extensionsDir, "proxy_auth_extension.xpi")
+	extData, err := ioutil.ReadFile(extensionPath)
+	if err != nil {
+		return "", fmt.Errorf("error reading extension file: %v", err)
+	}
+	err = ioutil.WriteFile(destExtPath, extData, 0644)
+	if err != nil {
+		return "", fmt.Errorf("error writing extension file to profile: %v", err)
+	}
+
+	// Zip the profile directory.
+	zippedProfile, err := zipDir(profileDir)
+	if err != nil {
+		return "", fmt.Errorf("error zipping firefox profile: %v", err)
+	}
+	// Base64‑encode the zipped profile.
+	encodedProfile := base64.StdEncoding.EncodeToString(zippedProfile)
+	return encodedProfile, nil
+}
+func generateUniqueFingerprint(userAgent, proxy string) selenium.Capabilities {
+	caps := selenium.Capabilities{"browserName": "firefox"}
+	firefoxOptions := map[string]interface{}{
+		"args": []string{""}, // Remove "-headless" if you need a visible browser.
+		"prefs": map[string]interface{}{
+			"general.useragent.override": userAgent,
+		},
+	}
+
+	// If proxy with authentication is provided, set up the profile with the extension.
+	if proxy != "" {
+		parts := strings.Split(proxy, ":")
+		if len(parts) == 4 {
+			ip := parts[0]
+			port := parts[1]
+			username := parts[2]
+			password := parts[3]
+
+			// Set proxy without credentials; Firefox expects "host:port"
+			proxyStr := fmt.Sprintf("%s:%s", ip, port)
+			caps["proxy"] = map[string]interface{}{
+				"proxyType": "manual",
+				"httpProxy": proxyStr,
+				"sslProxy":  proxyStr,
+			}
+			fmt.Println("Proxies:", proxy)
+
+			// Create the proxy extension that handles authentication.
+			extensionPath := createFirefoxProxyExtension(ip, port, username, password)
+
+			// Create a temporary Firefox profile.
+			profileDir, err := ioutil.TempDir("", "firefox_profile")
+			if err != nil {
+				panic(fmt.Sprintf("Error creating temporary firefox profile: %v", err))
+			}
+			// Ensure we create an 'extensions' subdirectory.
+			extDir := filepath.Join(profileDir, "extensions")
+			if err = os.Mkdir(extDir, 0755); err != nil {
+				panic(fmt.Sprintf("Error creating extensions directory: %v", err))
+			}
+
+			// Copy the generated extension into the profile's extensions folder.
+			destPath := filepath.Join(extDir, "proxy_auth_extension.xpi")
+			extData, err := ioutil.ReadFile(extensionPath)
+			if err != nil {
+				panic(fmt.Sprintf("Error reading extension file: %v", err))
+			}
+			if err = ioutil.WriteFile(destPath, extData, 0644); err != nil {
+				panic(fmt.Sprintf("Error writing extension file to profile: %v", err))
+			}
+
+			// Zip the profile directory and base64‑encode the ZIP file.
+			zippedProfile, err := zipDir(profileDir)
+			if err != nil {
+				panic(fmt.Sprintf("Error zipping firefox profile: %v", err))
+			}
+			encodedProfile := base64.StdEncoding.EncodeToString(zippedProfile)
+			firefoxOptions["profile"] = encodedProfile
+
+			fmt.Println("Proxy configured with authentication extension installed in firefox profile.")
+		} else {
+			// Fallback for proxies without authentication details.
+			fmt.Println("Proxy provided without authentication details.")
+			caps["proxy"] = map[string]interface{}{
+				"proxyType": "manual",
+				"httpProxy": proxy,
+				"sslProxy":  proxy,
+			}
+		}
+	}
+
+	caps["moz:firefoxOptions"] = firefoxOptions
+	return caps
 }
 
+// zipDir zips the provided directory and returns the zipped bytes.
+func zipDir(dir string) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	zipWriter := zip.NewWriter(buf)
+
+	// Walk through all files in the directory.
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		// Skip directories.
+		if info.IsDir() {
+			return nil
+		}
+		// Get a relative path for the file to preserve directory structure.
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		f, err := zipWriter.Create(relPath)
+		if err != nil {
+			return err
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		_, err = io.Copy(f, file)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err = zipWriter.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 func scrollToBottom(wd selenium.WebDriver) error {
 	_, err := wd.ExecuteScript("window.scrollTo(0, document.body.scrollHeight);", nil)
 	return err
@@ -130,7 +315,7 @@ func scrapeTwitterSearch(query_ chan []AddressEntry, index int, totalNode int, c
 	defer service.Stop()
 
 	// Connect to the WebDriver
-	wd, err := selenium.NewRemote(caps, fmt.Sprintf("http://localhost:%d/wd/hub", port))
+	wd, err := selenium.NewRemote(caps, fmt.Sprintf("http://localhost:%d", port))
 	if err != nil {
 		log.Printf("Error connecting to WebDriver: %v", err)
 		resultChan <- Result{Index: index, Success: false, ErrorMsg: fmt.Sprintf("Error connecting to WebDriver: %v", err)}
@@ -683,7 +868,103 @@ func readJSONFile(filePath string) []AddressEntry {
 	}
 	return jsonAddresses
 }
+func createFirefoxProxyExtension(ip, port, username, password string) string {
+	// Create an in-memory ZIP archive.
+	buffer := new(bytes.Buffer)
+	zipWriter := zip.NewWriter(buffer)
 
+	// Create manifest.json content.
+	manifestContent := fmt.Sprintf(`{
+  "version": "1.0.0",
+  "manifest_version": 2,
+  "name": "Firefox Proxy",
+  "permissions": [
+    "proxy",
+    "webRequest",
+    "webRequestBlocking",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "firefox-proxy@example.com",
+      "strict_min_version": "60.0"
+    }
+  }
+}`)
+	mWriter, err := zipWriter.Create("manifest.json")
+	if err != nil {
+		log.Fatalf("Error creating manifest.json in zip: %v", err)
+	}
+	_, err = mWriter.Write([]byte(manifestContent))
+	if err != nil {
+		log.Fatalf("Error writing manifest.json: %v", err)
+	}
+
+	// Create background.js content.
+	backgroundContent := fmt.Sprintf(`var config = {
+    mode: "fixed_servers",
+    rules: {
+        singleProxy: {
+            scheme: "http",
+            host: "%s",
+            port: parseInt("%s")
+        },
+        bypassList: ["localhost"]
+    }
+};
+
+browser.proxy.settings.set({value: config, scope: "regular"}).catch(e => {
+    console.error("Error setting proxy:", e);
+});
+
+function callbackFn(details) {
+    return {
+        authCredentials: {
+            username: "%s",
+            password: "%s"
+        }
+    };
+}
+
+browser.webRequest.onAuthRequired.addListener(
+    callbackFn,
+    {urls: ["<all_urls>"]},
+    ["blocking"]
+);`, ip, port, username, password)
+
+	bWriter, err := zipWriter.Create("background.js")
+	if err != nil {
+		log.Fatalf("Error creating background.js in zip: %v", err)
+	}
+	_, err = bWriter.Write([]byte(backgroundContent))
+	if err != nil {
+		log.Fatalf("Error writing background.js: %v", err)
+	}
+
+	// Finalize the ZIP archive.
+	if err := zipWriter.Close(); err != nil {
+		log.Fatalf("Error closing zip writer: %v", err)
+	}
+
+	// Write the in-memory ZIP to a temporary file.
+	tmpFile, err := ioutil.TempFile("", "firefox-proxy-extension-*.xpi")
+	if err != nil {
+		log.Fatalf("Error creating temp file: %v", err)
+	}
+	defer tmpFile.Close()
+
+	_, err = tmpFile.Write(buffer.Bytes())
+	if err != nil {
+		log.Fatalf("Error writing to temp file: %v", err)
+	}
+
+	extensionPath := tmpFile.Name()
+	log.Printf("Firefox proxy extension created: %s", extensionPath)
+	return extensionPath
+}
 func main() {
 	var addrArray []AddressEntry
 	var cookArray []string
@@ -744,7 +1025,7 @@ func main() {
 			ipAddress := proxyParts[0]
 			port := proxyParts[1]
 			// For Firefox, we set the proxy directly in capabilities.
-			proxyStr := fmt.Sprintf("%s:%s", ipAddress, port)
+			proxyStr := randomProxy //fmt.Sprintf("%s:%s", ipAddress, port)
 			thecookies := cookies[rndInput]
 			semaphore <- struct{}{}
 			wg.Add(1)
@@ -752,6 +1033,8 @@ func main() {
 			go func(ipAddress_ string, port_ string, query_ chan []AddressEntry, randomUserAgent_ string, cookies string, index_ int) {
 				defer wg.Done()
 				fmt.Println("Query:", query_, "Agent:", randomUserAgent_, "IP:", ipAddress_, "Port:", port_, "Cookies:", cookies, "Index:", index_)
+				//extent := createFirefoxProxyExtension(ipAddress_, port_, "uyxzmtjn", "ietipyjz5ls7")
+
 				caps := generateUniqueFingerprint(randomUserAgent_, proxyStr)
 				scrapeTwitterSearch(query_, index_, len(cookiesArray), caps, cookies, resultChan)
 			}(ipAddress, port, addArryChn, randomUserAgent, thecookies, index)

@@ -222,7 +222,6 @@ func AddAddress() {
 			fmt.Println("Error reading input:", err)
 			return
 		}
-
 		metaData := getTokenMetadata(input, index)
 		if input != "" {
 			addresses = append(addresses, Address{Address: input, Name: metaData.Name, Symbol: metaData.Symbol, Index: index})

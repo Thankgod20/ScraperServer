@@ -1,32 +1,38 @@
 [
   {
-    "proxies": "171.22.250.114:6233:uyxzmtjn:ietipyjz5ls7"
+    "proxies": "104.238.8.201:6059:uyxzmtjn:ietipyjz5ls7"
   },
   {
-    "proxies": "45.131.94.163:6150:uyxzmtjn:ietipyjz5ls7"
+    "proxies": "140.233.166.176:7209:uyxzmtjn:ietipyjz5ls7"
   },
   {
-    "proxies": "147.185.250.204:6990:uyxzmtjn:ietipyjz5ls7"
+    "proxies": "155.254.38.68:5744:uyxzmtjn:ietipyjz5ls7"
   },
   {
-    "proxies": "145.223.46.175:5725:uyxzmtjn:ietipyjz5ls7"
+    "proxies": "38.225.3.96:5379:uyxzmtjn:ietipyjz5ls7"
   },
   {
-    "proxies": "185.48.52.211:5803:uyxzmtjn:ietipyjz5ls7"
+    "proxies": "46.203.218.149:8803:uyxzmtjn:ietipyjz5ls7"
   },
   {
-    "proxies": "206.232.13.144:5810:uyxzmtjn:ietipyjz5ls7"
+    "proxies": "82.22.210.215:8057:uyxzmtjn:ietipyjz5ls7"
   },
   {
-    "proxies": "104.239.105.210:6740:uyxzmtjn:ietipyjz5ls7"
+    "proxies": "104.239.105.165:6695:uyxzmtjn:ietipyjz5ls7"
   },
   {
-    "proxies": "45.159.53.145:7517:uyxzmtjn:ietipyjz5ls7"
+    "proxies": "138.128.145.209:6128:uyxzmtjn:ietipyjz5ls7"
   },
   {
-    "proxies": "64.137.57.58:6067:uyxzmtjn:ietipyjz5ls7"
+    "proxies": "185.236.95.42:6003:uyxzmtjn:ietipyjz5ls7"
   },
   {
-    "proxies": "150.107.224.216:6131:uyxzmtjn:ietipyjz5ls7"
+    "proxies": "147.185.217.168:6602:uyxzmtjn:ietipyjz5ls7"
+  },
+  {
+    "proxies": "198.12.112.171:5182:uyxzmtjn:ietipyjz5ls7"
+  },
+  {
+    "proxies": "103.114.59.63:6840:uyxzmtjn:ietipyjz5ls7"
   }
 ]
