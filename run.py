@@ -34,9 +34,9 @@ SCROLL_LIMIT = 100
 SCROLL_WAIT = 5
 query_queue = queue.Queue()
 active_query =[]
-# @title Default title text
-#How can i send data to active thread in python. (Note: Edit only the relevant part of the code)
+# @title Selenium text
 
+port_lock = threading.Lock()
 # ----------------------------
 # Helper Functions and Classes
 # ----------------------------
@@ -79,11 +79,11 @@ def generate_unique_fingerprint(proxy_extension, user_agent, index):
     options = webdriver.ChromeOptions()
 
     # Set the binary location (for Colab use chromium-browser)
-    #options.binary_location = "/usr/bin/chromium-browser"
+    options.binary_location = "/usr/bin/chromium-browser"
 
     # Common Chrome args
     args = [
-        #"--headless=new",
+        "--headless=new",
         "--no-sandbox",
         "--disable-gpu",
         "--disable-dev-shm-usage",
@@ -95,8 +95,7 @@ def generate_unique_fingerprint(proxy_extension, user_agent, index):
         "--disable-notifications",
         "--mute-audio",
         "--no-first-run",
-        "--start-maximized",
-        f"--user-data-dir=/tmp/chrome_profile_{index}"  # Use /tmp for temporary data
+        f"--user-data-dir=/tmp/chrome_profile_{index}_{int(time.time())}"  # Add timestamp  # Use /tmp for temporary data
     ]
 
     for arg in args:
@@ -112,7 +111,6 @@ def generate_unique_fingerprint(proxy_extension, user_agent, index):
     options.page_load_strategy = 'eager'  # 'eager' loads DOM but not all resources
 
     return options
-
 def scroll_to_bottom(driver):
     """Scroll to the bottom of the page with error handling."""
     try:
@@ -157,12 +155,13 @@ def is_port_available(port):
             return False
 
 def get_random_port():
-    """Get a random available port."""
-    for _ in range(10):  # Try up to 10 times
-        port = random.randint(10000, 65000)
-        if is_port_available(port):
-            return port
-    return 0  # Return 0 if no port found
+    """Get a random available port with thread safety."""
+    with port_lock:  # Ensure atomic port check
+        for _ in range(10):
+            port = random.randint(10000, 65000)
+            if is_port_available(port):
+                return port
+        return 0  # Fallback to auto-select
 
 def update_session_status(id, port, status):
     """Update the status of a session in the remote file."""
@@ -450,75 +449,56 @@ def scrape_and_save_tweet(query, driver, index,time_count, plot_time):
         return False
 
 def create_proxy_extension(ip, port, username, password):
-    """Create a Manifest V3 Chrome extension for proxy authentication with a proactive beacon."""
+    """Create a Chrome extension for proxy authentication."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
         manifest = r'''{
-  "manifest_version": 3,
-  "name": "Chrome Proxy with Auth",
-  "version": "1.0.0",
-  "permissions": [
-    "proxy",
-    "webRequest",
-    "webRequestAuthProvider",
-    "storage"
-  ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
-  "background": {
-    "service_worker": "background.js"
-  }
+    "version": "1.0.0",
+    "manifest_version": 2,
+    "name": "Chrome Proxy",
+    "permissions": [
+        "proxy",
+        "webRequest",
+        "webRequestBlocking",
+        "tabs",
+        "storage",
+        "<all_urls>"
+    ],
+    "background": {
+        "scripts": ["background.js"]
+    },
+    "minimum_chrome_version": "76.0.0"
 }'''
         zipf.writestr("manifest.json", manifest)
-        
-        # The background service worker sets the proxy and listens for auth requests.
-        # It also sends a proactive beacon request (from the service worker via fetch)
-        # to a known URL through the proxy. This minimizes the chance of an authentication popup.
-        background = f'''// Set up the proxy configuration
-chrome.proxy.settings.set({{
-  value: {{
+
+        background = f'''var config = {{
     mode: "fixed_servers",
     rules: {{
-      singleProxy: {{
-        scheme: "http",
-        host: "{ip}",
-        port: parseInt("{port}")
-      }},
-      bypassList: ["localhost"]
+        singleProxy: {{
+            scheme: "http",
+            host: "{ip}",
+            port: parseInt("{port}")
+        }},
+        bypassList: ["localhost"]
     }}
-  }},
-  scope: "regular"
-}}, function() {{
-  console.log("Proxy settings applied");
+}};
+
+chrome.proxy.settings.set({{ value: config, scope: "regular" }}, function() {{
+    console.log("Proxy settings applied");
 }});
 
-// Listen for authentication requests and supply credentials.
 chrome.webRequest.onAuthRequired.addListener(
-  function(details, asyncCallback) {{
-    console.log("Auth required for:", details.url);
-    // Supply the credentials asynchronously.
-    asyncCallback({{
-      authCredentials: {{
-        username: "{username}",
-        password: "{password}"
-      }}
-    }});
-  }},
-  {{ urls: ["<all_urls>"] }},
-  ["asyncBlocking"]
-);
-
-// Proactive beacon request: trigger a lightweight fetch so that the service worker is active
-// and the proxy credentials are pre-cached before normal browsing begins.
-fetch("https://example.com/", {{ cache: "no-store" }})
-  .then(response => {{
-    console.log("Beacon fetch completed:", response.status);
-  }})
-  .catch(err => {{
-    console.error("Beacon fetch error:", err);
-  }});
-'''
+    function(details) {{
+        return {{
+            authCredentials: {{
+                username: "{username}",
+                password: "{password}"
+            }}
+        }};
+    }},
+    {{ urls: ["<all_urls>"] }},
+    ["blocking"]
+);'''
         zipf.writestr("background.js", background)
     return base64.b64encode(buffer.getvalue()).decode()
 
@@ -563,8 +543,8 @@ def initialize_driver(chrome_options, index):
             os.environ["CHROMEDRIVER_PORT"] = unique_port
             print(f"[INFO] Using CHROMEDRIVER_PORT: {unique_port}")
 
-            chrome_service = ChromeService(executable_path='./chromedriver',port=unique_port)
-            driver = webdriver.Chrome(options=chrome_options, service=chrome_service)
+            chrome_service = Service(executable_path='./chromedriver',port=unique_port)
+            driver = webdriver.Chrome(options=chrome_options)
             driver.set_page_load_timeout(DRIVER_INIT_TIMEOUT)
 
             # Register with browser manager
@@ -696,7 +676,7 @@ def scrape_twitter_search( index, chrome_options, cookie_value, result_queue,):
 
         iteration = 0
         itt =0
-        
+
         while not shutdown_event.is_set():
             Loaded = True
             print(f"[INFO] [Browser {index}], [ROUND]: {iteration} ")
@@ -708,13 +688,30 @@ def scrape_twitter_search( index, chrome_options, cookie_value, result_queue,):
                         if shutdown_event.is_set():
                             print(f"[INFO] [Browser {index}] Received shutdown signal, exiting")
                             break
-                        if query_ in active_query:
-                            print(f"[INFO] [Browser {index}] Query already active, skipping: {query_}")
+                                                # Check if query is a removal request based on the 'address' field.
+                        address_field = query_.get('address', '')
+                        if address_field.startswith("remove_"):
+                            addr_to_remove = address_field[len("remove_"):]
+                            # Remove query from query_array if found.
+                            original_length = len(query_array)
+                            query_array = [q for q in query_array if q.get('address', '') != addr_to_remove]
+                            if len(query_array) < original_length:
+                                print(f"[INFO] [Browser {index}] Removed query with address: {addr_to_remove}")
+                            else:
+                                print(f"[INFO] [Browser {index}] No query found with address: {addr_to_remove} to remove")
+                            # Skip further processing for this removal request.
                             continue
+
                         if query_.get('index') == index:
-                            print(f"[INFO] [Browser {index}] Found matching query: {query_}")
-                            query = query_
-                            active_query.append(query_)
+                            new_addr = query_.get('address', '')
+                            # Check for duplicates: only add if address isn't already in query_array.
+                            if any(q.get('address', '') == new_addr for q in query_array):
+                                print(f"[INFO] [Browser {index}] Duplicate address detected, skipping: {new_addr}")
+                            else:
+                                if len(query_array)<6:
+                                  print(f"[INFO] [Browser {index}] Found matching query: {query_}")
+                                  query_array.append(query_)
+                                  #iteration = len(query_array)-1
 
 
                         else:
@@ -723,10 +720,11 @@ def scrape_twitter_search( index, chrome_options, cookie_value, result_queue,):
                     for item in unmatched_queries:
                         query_queue.put(item)
                     unmatched_queries.clear()
+                '''
                 if query is not None and len(query_array)<6:#if query is not None and query.get('index') == index:
                     query_array.append(query)
                     query = None
-                    iteration = len(query_array)-1
+                    iteration = len(query_array)-1 '''
                 if len(query_array)>0:
                     print(f"[INFO] [Browser {index}] Full Query Array: {query_array} Processing")
                     now = datetime.datetime.now()
@@ -739,11 +737,14 @@ def scrape_twitter_search( index, chrome_options, cookie_value, result_queue,):
                     # Navigate to search URL
                     update_session_status(index, port, f"Searching Count: {iteration} of ArraySize {len(query_array)} Total Iteration {itt} ")
                     search_url = ""
-                    if itt%2==0:
+                    search_mode = (itt + iteration) % 2
+                    if search_mode==0:
+                        update_session_status(index, port, f"Searching Count: {iteration} of ArraySize {len(query_array)} Total Iteration {itt} [Top] ")
                         search_url = f"https://x.com/search?q={query_array[iteration]['address']}%20OR%20${query_array[iteration]['symbol']}%20since:{yesterdate}&src=typed_query"
                     else:
+                        update_session_status(index, port, f"Searching Count: {iteration} of ArraySize {len(query_array)} Total Iteration {itt} [Latest] ")
                         search_url = f"https://x.com/search?q={query_array[iteration]['address']}%20OR%20${query_array[iteration]['symbol']}%20since:{yesterdate}&src=typeahead_click&f=live"
-                    
+
                     print(f"[INFO] [Browser {index}] Navigating to: {search_url}")
                     driver.get(search_url)
 
@@ -778,7 +779,7 @@ def scrape_twitter_search( index, chrome_options, cookie_value, result_queue,):
             if iteration > (len(query_array)-1) or iteration >5:
                 print(f"[INFO] [Browser {index}] Reached 5 iterations. Waiting for a new query to update the address.")
                 iteration = 0
-            
+
             time.sleep(10)
 
     except Exception as e:

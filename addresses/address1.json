@@ -197,3 +197,77 @@
   }
   
 ]
+[
+  {
+    "address": "GzdFBGKXeSLpdMmsy4761iLf6MRSHy7CZEcXGrwkpump",
+    "name": "Haircoin",
+    "symbol": "HAIR",
+    "index": 0
+  },
+  {
+    "address": "B73bV6wWrEq9kZgPUqe6zTZXSNgUB3kMmvLmC2bzpump",
+    "name": "The Farter",
+    "symbol": "FARTER",
+    "index": 1
+  },
+  {
+    "address": "5d82791nEub4A6WJR4t5rtDUrM1CrWdcw4kea4U9pump",
+    "name": "fartcycle (real)",
+    "symbol": "fartcycle",
+    "index": 3
+  },
+  {
+    "address": "CuCeQR5ddf1mYaYGS7LdcQfWxqtqhso8ChkAsWrTpump",
+    "name": "Coin ",
+    "symbol": "Ggool ",
+    "index": 4
+  },
+  {
+    "address": "Jv8cn9yAGS7aBJqwqyEQUXgeCQ9VKaQ7gvYNDsqpump",
+    "name": "Skibidi Toilet Coin",
+    "symbol": "STC",
+    "index": 1
+  },
+  {
+    "address": "8usJHdAQBCmdGgKqTrXR7b5Fs4WnZ9roexBZw1rYpump",
+    "name": "Degenerate Finance",
+    "symbol": "DeFi",
+    "index": 3
+  },
+  {
+    "address": "CtUDdeSmUwioaJMuH89u7pL9FDWx5j2ZhsBNZt2jpump",
+    "name": "Squishify Sol Mallows",
+    "symbol": "squish",
+    "index": 4
+  },
+  {
+    "address": "GiuNWpQXsmXHsvjM1vYstKSnKq588iDPczz99hFwpump",
+    "name": "KETAMINE COIN",
+    "symbol": "KETCOIN",
+    "index": 0
+  },
+  {
+    "address": "Zyj2B6C8UtmpvbxDqaPpso8VMCiid45f9rULBh5pump",
+    "name": "VIRGINCOIN",
+    "symbol": "VIRGIN",
+    "index": 0
+  },
+  {
+    "address": "4ae47wGcYfpf8TsV6i5BKaaTMrLM4nNPFfVPdWxupump",
+    "name": "Retard Principal",
+    "symbol": "RP",
+    "index": 1
+  },
+  {
+    "address": "BUdbQzaA3PjYrYLgr5ipeHRPp8ygXh74r5mbYbEkpump",
+    "name": "Meme War General",
+    "symbol": "MWG",
+    "index": 3
+  },
+  {
+    "address": "9GM5ij1k8WmMtr7KRK3b29ipZp7mjT8AcJchvyDTpump",
+    "name": "Retard Asset Management",
+    "symbol": "RAM",
+    "index": 4
+  }
+]

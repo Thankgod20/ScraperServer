@@ -18,6 +18,7 @@ import (
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/go-redis/redis"
+	"github.com/gorilla/websocket"
 	holders "github.com/thankgod20/scraperServer/Holders"
 )
 
@@ -28,6 +29,10 @@ const (
 	contentTypeKey = "Content-Type"
 	contentTypeVal = "application/json"
 )
+
+// ----------------------
+// Structures for Add-Address and Migration Events
+// ----------------------
 
 type NFTMetadata struct {
 	Name   string `json:"name"`
@@ -43,10 +48,6 @@ type Transfer struct {
 	Time    NullTime `json:"time"`
 	Price   float64  `json:"price"`
 }
-
-// ----------------------
-// Structures for new endpoints
-// ----------------------
 
 type Address struct {
 	Address string `json:"address"`
@@ -66,9 +67,15 @@ type TokenMetadata struct {
 	URI    string `json:"uri"`
 }
 
-var RedisClient *redis.Client
+// MigrationEvent represents the JSON payload for a migration event.
+type MigrationEvent struct {
+	Signature string `json:"signature"`
+	Mint      string `json:"mint"`
+	TxType    string `json:"txType"`
+	Pool      string `json:"pool"`
+}
 
-//var ctx = context.Background()
+var RedisClient *redis.Client
 
 func init() {
 	RedisClient = redis.NewClient(&redis.Options{
@@ -91,16 +98,17 @@ type APIResponse struct {
 	Values []interface{} `json:"values"`
 }
 
-// Handler to fetch keys and data
+// ----------------------
+// HTTP Handlers (Unchanged)
+// ----------------------
+
 func fetchHolderKeysAndDataHandler(w http.ResponseWriter, r *http.Request) {
-	searchWord := r.URL.Query().Get("search") //"4x77NhFuVzWWDGEMUyB17e3nhvVdkV7HT2AZNmz6pump"
+	searchWord := r.URL.Query().Get("search")
 	pattern := fmt.Sprintf("%s", searchWord)
 	fmt.Println("Partern", pattern)
 
-	// Create a new BitqueryClient.
 	client := holders.NewBitqueryClient()
 
-	// Fetch transfer data, update the JSON file, and get its content.
 	output, err := client.UpdateAndGetTransfers(pattern)
 	if err != nil {
 		log.Fatalf("Error updating and getting transfers: %v", err)
@@ -109,33 +117,27 @@ func fetchHolderKeysAndDataHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal([]byte(output), &transfers); err != nil {
 		log.Fatalf("Error decoding transfers: %v", err)
 	}
-	// If no values were found, return an appropriate response
 	if len(transfers) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"message": "No matching keys found"})
 		return
 	}
-
-	// Send the response
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(transfers); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }
 
-// Handler to fetch keys and data
 func fetchKeysAndDataHandler(w http.ResponseWriter, r *http.Request) {
-	searchWord := r.URL.Query().Get("search") //"4x77NhFuVzWWDGEMUyB17e3nhvVdkV7HT2AZNmz6pump"
+	searchWord := r.URL.Query().Get("search")
 	pattern := fmt.Sprintf("*spltoken:%s*", searchWord)
 
-	// Get all keys matching the pattern
 	keys, err := RedisClient.Keys(pattern).Result()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to retrieve keys: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Retrieve the values for each key
 	var values []interface{}
 	for _, key := range keys {
 		value, err := RedisClient.Get(key).Result()
@@ -145,137 +147,48 @@ func fetchKeysAndDataHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		var rawValue interface{}
 		if err := json.Unmarshal([]byte(value), &rawValue); err == nil {
-			// If JSON decoding succeeds, use the decoded value
 			values = append(values, rawValue)
 		} else {
-			// Otherwise, use the raw value
 			cleanedValue := strings.ReplaceAll(value, "\\\"", "\"")
-
-			// Append the cleaned value
 			values = append(values, cleanedValue)
 		}
-
 	}
 
-	// If no values were found, return an appropriate response
 	if len(values) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"message": "No matching keys found"})
 		return
 	}
 
-	// Send the response
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(values); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }
-func main() {
-	// Initialize server routes with CORS handling
 
-	http.HandleFunc("/saveData", withCORS(saveDataHandler))
-	http.HandleFunc("/tweet", withCORS(tweetHandler))
-	http.HandleFunc("/tweeturl", withCORS(tweetURLHandler))
-	http.HandleFunc("/api/token-metadata", withCORS(getTokenMetadata))
-
-	http.HandleFunc("/fetch-data", withCORS(fetchKeysAndDataHandler))
-	http.HandleFunc("/fetch-holders", withCORS(fetchHolderKeysAndDataHandler))
-
-	// New endpoints:
-	http.HandleFunc("/add-proxies", withCORS(addProxiesHandler))
-	http.HandleFunc("/add-cookies", withCORS(addCookiesHandler))
-	http.HandleFunc("/add-address", withCORS(addAddressHandler))
-	http.HandleFunc("/session-status", withCORS(readSessionStatusHandler))
-
-	staticPath := filepath.Join("..", "static")
-	fs := http.FileServer(http.Dir(staticPath))
-	http.Handle("/static/", withCORSStat(http.StripPrefix("/static/", fs)))
-
-	//AddressPath
-	addressPath := filepath.Join("..", "addresses")
-	fs_addr := http.FileServer(http.Dir(addressPath))
-	http.Handle("/addresses/", withCORSStat(http.StripPrefix("/addresses/", fs_addr)))
-	//SplToken
-	slptokenPath := filepath.Join("..", "spltoken")
-	fs_slptkn := http.FileServer(http.Dir(slptokenPath))
-	http.Handle("/spltoken/", withCORSStat(http.StripPrefix("/spltoken/", fs_slptkn)))
-	// Start the server
-	fmt.Println("Server running on http://localhost:3300")
-	http.ListenAndServe(":3300", nil)
-}
-
-// Middleware to set headers
-func setHeaders(w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set(contentTypeKey, contentTypeVal)
-}
-
-// withCORS adds CORS headers and handles preflight requests
-func withCORS(handler http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-		// Handle preflight request
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// Call the original handler
-		handler(w, r)
-	}
-}
-func withCORSStat(handler http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Add CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-		// Handle preflight requests
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// Serve the request
-		handler.ServeHTTP(w, r)
-	})
-}
 func getTokenMetadata(w http.ResponseWriter, r *http.Request) {
-	// Extract the mint address from the URL query parameters
 	mintAddress := r.URL.Query().Get("mint")
 	if mintAddress == "" {
 		http.Error(w, "Missing 'mint' query parameter", http.StatusBadRequest)
 		return
 	}
-
-	// Convert the mint address string to a Solana PublicKey
 	mintPubKey, err := solana.PublicKeyFromBase58(mintAddress)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Invalid mint address: %v", err), http.StatusBadRequest)
 		return
 	}
-
-	// Initialize the Solana RPC client
 	client := rpc.New(rpc.MainNetBeta_RPC)
 	commonMintPubKey := common.PublicKeyFromBytes(mintPubKey.Bytes())
-	// Derive the metadata account public key associated with the mint address
 	metadataPubKey, err := token_metadata.GetTokenMetaPubkey(commonMintPubKey)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to derive metadata public key: %v", err), http.StatusInternalServerError)
 		return
 	}
-
-	// Fetch the metadata account information
 	accountInfo, err := client.GetAccountInfo(context.Background(), solana.PublicKeyFromBytes(metadataPubKey[:]))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to fetch account info: %v", err), http.StatusInternalServerError)
 		return
 	}
-
 	if accountInfo == nil || accountInfo.Value == nil {
 		http.Error(w, "Metadata account not found", http.StatusNotFound)
 		return
@@ -285,72 +198,56 @@ func getTokenMetadata(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to retrieve binary data from account info", http.StatusInternalServerError)
 		return
 	}
-	// Deserialize the metadata account data
 	metadata, err := token_metadata.MetadataDeserialize(data)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to deserialize metadata: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Prepare the response with the desired metadata fields
 	response := NFTMetadata{
 		Name:   metadata.Data.Name,
 		Symbol: metadata.Data.Symbol,
 		URI:    metadata.Data.Uri,
 	}
-
-	// Set the response header and write the JSON response
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }
 
-// saveDataHandler saves or updates token data
 func saveDataHandler(w http.ResponseWriter, r *http.Request) {
 	setHeaders(w)
-
 	if r.Method != http.MethodPost {
-		fmt.Println("Invalid request method")
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var newData map[string]map[string]interface{} //map[string]map[string][]string
-
+	var newData map[string]map[string]interface{}
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		fmt.Println("Unable to read request body")
 		http.Error(w, "Unable to read request body", http.StatusInternalServerError)
 		return
 	}
 	defer r.Body.Close()
 	fmt.Println("Raw body:", string(body))
 	if err := json.Unmarshal(body, &newData); err != nil {
-		fmt.Println("Invalid JSON")
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	rootDir := ensureFolder(staticFolder)
-	existingData := make(map[string]map[string]interface{}) //make(map[string]map[string][]string)
+	existingData := make(map[string]map[string]interface{})
 	filePath := filepath.Join(rootDir, filePath_)
-	// Load existing data
 	if _, err := os.Stat(filePath); err == nil {
 		data, err := ioutil.ReadFile(filePath)
 		if err == nil {
 			json.Unmarshal(data, &existingData)
 		}
 	}
-
-	// Merge new data with existing data
 	for tokenAddress, tokenData := range newData {
-		fmt.Println("tokenAddress", tokenAddress, "tokenData", tokenData)
 		if _, exists := existingData[tokenAddress]; !exists {
 			existingData[tokenAddress] = tokenData
 		}
 	}
-
-	// Write updated data to file
 	data, _ := json.MarshalIndent(existingData, "", "  ")
 	if err := ioutil.WriteFile(filePath, data, 0644); err != nil {
 		http.Error(w, "Error saving data", http.StatusInternalServerError)
@@ -360,19 +257,15 @@ func saveDataHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Data saved successfully"))
 }
 
-// tweetHandler processes incoming tweet data
 func tweetHandler(w http.ResponseWriter, r *http.Request) {
 	setHeaders(w)
-
 	if r.Method != http.MethodPost {
-		fmt.Println("Invalid request method")
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
 
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		fmt.Println("Unable to read request body")
 		http.Error(w, "Unable to read request body", http.StatusInternalServerError)
 		return
 	}
@@ -380,20 +273,17 @@ func tweetHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Recieveing", string(body))
 	var requestData map[string]map[string]interface{}
 	if err := json.Unmarshal(body, &requestData); err != nil {
-		fmt.Println("Invalid JSON")
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
 	rootDir := ensureFolder(tokenFolder)
-
 	for tweetURL, data := range requestData {
 		address := fmt.Sprintf("%v", data["address"])
 		if address == "" {
 			continue
 		}
 		filePath := filepath.Join(rootDir, address+".json")
-
 		var fileData map[string]interface{}
 		if _, err := os.Stat(filePath); err == nil {
 			fileContent, _ := ioutil.ReadFile(filePath)
@@ -401,15 +291,12 @@ func tweetHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			fileData = make(map[string]interface{})
 		}
-		// Construct and save the JSON in the desired format
 		tweetContent, ok := data["tweet"].(string)
 		if !ok || tweetContent == "" {
 			fmt.Println("Missing or invalid tweet content")
 			continue
 		}
-
 		if _, exists := fileData[tweetURL]; !exists {
-			//fileData[tweetURL] = data["tweet"]
 			fileData[tweetURL] = map[string]interface{}{
 				"tweetData": map[string]string{
 					"tweet": tweetContent,
@@ -418,62 +305,41 @@ func tweetHandler(w http.ResponseWriter, r *http.Request) {
 			dataToWrite, _ := json.MarshalIndent(fileData, "", "  ")
 			ioutil.WriteFile(filePath, dataToWrite, 0644)
 		}
-
 	}
 
 	w.Write([]byte(`{"message": "Data processed successfully."}`))
 }
 
-// tweetURLHandler processes tweet URL data
 func tweetURLHandler(w http.ResponseWriter, r *http.Request) {
 	setHeaders(w)
-
 	if r.Method != http.MethodPost {
-		fmt.Println("Invalid request method")
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-
 		return
 	}
 
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		fmt.Println("Unable to read request body")
 		http.Error(w, "Unable to read request body", http.StatusInternalServerError)
-
 		return
 	}
 	defer r.Body.Close()
 
 	if strings.TrimSpace(string(body)) == "" {
-		fmt.Println("Request body is empty")
 		http.Error(w, "Request body is empty", http.StatusBadRequest)
-
 		return
 	}
 
 	w.Write([]byte(`{"message": "Data saved successfully"}`))
 }
 
-// ensureFolder ensures the folder exists, creates if not
 func ensureFolder(folder string) string {
-	// Construct the path to the root directory relative to the current file
-	rootDir := filepath.Join("..", folder) // ".." moves up one level from the current folder
-
-	// Create the folder in the root directory
+	rootDir := filepath.Join("..", folder)
 	if err := os.MkdirAll(rootDir, os.ModePerm); err != nil {
 		fmt.Println(err)
-
 	}
-
-	//fmt.Println("Folder created at:", rootDir)
-	/*
-		if _, err := os.Stat(folder); os.IsNotExist(err) {
-			os.MkdirAll(folder, 0755)
-		}*/
 	return rootDir
 }
 
-// contains checks if a slice contains a string
 func contains(slice []string, item string) bool {
 	for _, value := range slice {
 		if value == item {
@@ -488,7 +354,6 @@ func contains(slice []string, item string) bool {
 // ----------------------
 
 func getTokenMetadataFromAPI(mint string) (*TokenMetadata, error) {
-	// Call your token metadata endpoint (adjust the URL if needed)
 	url := fmt.Sprintf("http://localhost:3300/api/token-metadata?mint=%s", mint)
 	resp, err := http.Get(url)
 	if err != nil {
@@ -506,24 +371,123 @@ func getTokenMetadataFromAPI(mint string) (*TokenMetadata, error) {
 }
 
 // ----------------------
-// New E
+// WebSocket Migration Subscription and Address Update Logic
+// ----------------------
+
+// subscribeMigration connects to the WebSocket endpoint and subscribes for migration events.
+func subscribeMigration() {
+	wsURL := "wss://pumpportal.fun/api/data"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		log.Println("WebSocket dial error:", err)
+		return
+	}
+	defer conn.Close()
+	log.Println("Connected to migration subscription at", wsURL)
+
+	// Send subscription request for migration events.
+	subscription := map[string]string{"method": "subscribeMigration"}
+	msg, err := json.Marshal(subscription)
+	if err != nil {
+		log.Println("Error marshalling subscription:", err)
+		return
+	}
+
+	if err = conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+		log.Println("Error sending subscription message:", err)
+		return
+	}
+	log.Println("Sent migration subscription message.")
+
+	// Continuously read messages.
+	for {
+		_, message, err := conn.ReadMessage()
+		if err != nil {
+			log.Println("Error reading message:", err)
+			break
+		}
+		log.Println("Received migration event:", string(message))
+		// Parse the incoming migration event.
+		var event MigrationEvent
+		err = json.Unmarshal(message, &event)
+		if err != nil {
+			log.Println("Error parsing migration event:", err)
+			continue
+		}
+		// Only process if it is a migration event.
+		if event.TxType == "migrate" {
+			err = addMigratedTokenToAddresses(event)
+			if err != nil {
+				log.Println("Error adding migrated token to addresses:", err)
+			} else {
+				log.Println("Added migrated token", event.Mint, "to addresses")
+			}
+		}
+	}
+}
+
+// addMigratedTokenToAddresses reads the current addresses file and appends the new token if not already present.
+func addMigratedTokenToAddresses(event MigrationEvent) error {
+	addressesFile := filepath.Join("..", "addresses", "address.json")
+	var addresses []Address
+	if data, err := ioutil.ReadFile(addressesFile); err == nil {
+		json.Unmarshal(data, &addresses)
+	} else {
+		addresses = []Address{}
+	}
+	if int64(len(addresses))+50 < 50 {
+		// Check for duplicates.
+		for _, addr := range addresses {
+			if strings.EqualFold(addr.Address, event.Mint) {
+				log.Println("Token already exists in addresses:", event.Mint)
+				return nil
+			}
+		}
+
+		// Fetch token metadata.
+		metadata, err := getTokenMetadataFromAPI(event.Mint)
+		if err != nil {
+			log.Println("Failed to get metadata for", event.Mint, err)
+			metadata = &TokenMetadata{Name: "", Symbol: "", URI: ""}
+		}
+
+		newIndex := int64(len(addresses))
+		if newIndex > 9 {
+			newIndex = int64(len(addresses)) % 10
+		}
+		newAddress := Address{
+			Address: event.Mint,
+			Name:    metadata.Name,
+			Symbol:  metadata.Symbol,
+			Index:   newIndex,
+		}
+		addresses = append(addresses, newAddress)
+		os.MkdirAll(filepath.Dir(addressesFile), os.ModePerm)
+		file, err := os.Create(addressesFile)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		encoder := json.NewEncoder(file)
+		encoder.SetIndent("", "  ")
+
+		return encoder.Encode(addresses)
+	}
+	return nil
+}
+
 // ----------------------
 // New Endpoints: Add Proxies, Cookies, and Addresses
 // ----------------------
 
-// /add-proxies expects: {"proxies": ["IP:PORT", "IP:PORT", ...]}
-
-// addProxiesHandler serves as a single-page interface to manage proxies.
 func addProxiesHandler(w http.ResponseWriter, r *http.Request) {
 	outputPath := filepath.Join("..", "datacenter", "proxies.json")
 	var proxies []Proxy
-	// Read current proxies if the file exists.
 	if data, err := ioutil.ReadFile(outputPath); err == nil {
 		json.Unmarshal(data, &proxies)
 	}
 
 	if r.Method == http.MethodPost {
-		// Process form submission based on the "action" field.
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Failed to parse form", http.StatusBadRequest)
 			return
@@ -531,7 +495,6 @@ func addProxiesHandler(w http.ResponseWriter, r *http.Request) {
 		action := r.FormValue("action")
 		switch action {
 		case "add":
-			// Add new proxies from the textarea.
 			newProxiesText := r.FormValue("newProxies")
 			lines := strings.Split(newProxiesText, "\n")
 			for _, line := range lines {
@@ -541,7 +504,6 @@ func addProxiesHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case "edit":
-			// Edit a proxy at a specific index.
 			indexStr := r.FormValue("index")
 			newProxyValue := strings.TrimSpace(r.FormValue("proxy"))
 			index, err := strconv.Atoi(indexStr)
@@ -549,7 +511,6 @@ func addProxiesHandler(w http.ResponseWriter, r *http.Request) {
 				proxies[index].Address = newProxyValue
 			}
 		case "delete":
-			// Delete a proxy at a specific index.
 			indexStr := r.FormValue("index")
 			index, err := strconv.Atoi(indexStr)
 			if err == nil && index >= 0 && index < len(proxies) {
@@ -559,7 +520,6 @@ func addProxiesHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Unknown action", http.StatusBadRequest)
 			return
 		}
-		// Write the updated proxies list back to the JSON file.
 		os.MkdirAll(filepath.Dir(outputPath), os.ModePerm)
 		file, err := os.Create(outputPath)
 		if err != nil {
@@ -577,7 +537,6 @@ func addProxiesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For GET requests, render the HTML page with the add/edit/delete interface.
 	w.Header().Set("Content-Type", "text/html")
 	html := `<!DOCTYPE html>
 <html lang="en">
@@ -610,7 +569,6 @@ func addProxiesHandler(w http.ResponseWriter, r *http.Request) {
       <th>Proxy</th>
       <th>Actions</th>
     </tr>`
-	// Dynamically generate a table row for each proxy.
 	for i, proxy := range proxies {
 		html += `<tr>
       <td>` + fmt.Sprintf("%d", i) + `</td>
@@ -640,13 +598,11 @@ func addProxiesHandler(w http.ResponseWriter, r *http.Request) {
 func addCookiesHandler(w http.ResponseWriter, r *http.Request) {
 	outputPath := filepath.Join("..", "datacenter", "cookies.json")
 	var cookies []Cookies
-	// Load existing cookies from file (if exists).
 	if data, err := ioutil.ReadFile(outputPath); err == nil {
 		json.Unmarshal(data, &cookies)
 	}
 
 	if r.Method == http.MethodPost {
-		// Process form submission.
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Failed to parse form", http.StatusBadRequest)
 			return
@@ -654,7 +610,6 @@ func addCookiesHandler(w http.ResponseWriter, r *http.Request) {
 		action := r.FormValue("action")
 		switch action {
 		case "add":
-			// Add new cookies from textarea.
 			newCookiesText := r.FormValue("newCookies")
 			lines := strings.Split(newCookiesText, "\n")
 			for _, line := range lines {
@@ -664,7 +619,6 @@ func addCookiesHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case "edit":
-			// Edit a cookie at a given index.
 			indexStr := r.FormValue("index")
 			newCookie := strings.TrimSpace(r.FormValue("cookie"))
 			index, err := strconv.Atoi(indexStr)
@@ -672,7 +626,6 @@ func addCookiesHandler(w http.ResponseWriter, r *http.Request) {
 				cookies[index].Address = newCookie
 			}
 		case "delete":
-			// Delete a cookie at the given index.
 			indexStr := r.FormValue("index")
 			index, err := strconv.Atoi(indexStr)
 			if err == nil && index >= 0 && index < len(cookies) {
@@ -682,7 +635,6 @@ func addCookiesHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Unknown action", http.StatusBadRequest)
 			return
 		}
-		// Write the updated cookies list back to the JSON file.
 		os.MkdirAll(filepath.Dir(outputPath), os.ModePerm)
 		file, err := os.Create(outputPath)
 		if err != nil {
@@ -700,7 +652,6 @@ func addCookiesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For GET: Render the HTML page.
 	w.Header().Set("Content-Type", "text/html")
 	html := `<!DOCTYPE html>
 <html lang="en">
@@ -759,11 +710,9 @@ func addCookiesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(html))
 }
 
-// /add-address expects: {"addresses": [{"address": "mintAddress", "index": 1}, ...]}
 func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 	outputPath := filepath.Join("..", "addresses", "address.json")
 	var addresses []Address
-	// Load existing addresses from file (if exists).
 	if data, err := ioutil.ReadFile(outputPath); err == nil {
 		json.Unmarshal(data, &addresses)
 	}
@@ -776,7 +725,6 @@ func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 		action := r.FormValue("action")
 		switch action {
 		case "add":
-			// Add new address: fetch metadata and append.
 			newAddress := strings.TrimSpace(r.FormValue("newAddress"))
 			newIndexStr := strings.TrimSpace(r.FormValue("newIndex"))
 			if newAddress != "" && newIndexStr != "" {
@@ -784,7 +732,6 @@ func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 				if err == nil {
 					metadata, err := getTokenMetadataFromAPI(newAddress)
 					if err != nil {
-						// In case of error, you can choose to set empty metadata.
 						metadata = &TokenMetadata{Name: "", Symbol: "", URI: ""}
 					}
 					addresses = append(addresses, Address{
@@ -796,7 +743,6 @@ func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case "edit":
-			// Edit an existing address: update the mint address and index and re-fetch metadata.
 			rowStr := r.FormValue("row")
 			newAddress := strings.TrimSpace(r.FormValue("address"))
 			newIndexStr := strings.TrimSpace(r.FormValue("index"))
@@ -817,7 +763,6 @@ func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case "delete":
-			// Delete an address at the specified row.
 			rowStr := r.FormValue("row")
 			row, err := strconv.Atoi(rowStr)
 			if err == nil && row >= 0 && row < len(addresses) {
@@ -827,7 +772,6 @@ func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Unknown action", http.StatusBadRequest)
 			return
 		}
-		// Write updated addresses back to file.
 		os.MkdirAll(filepath.Dir(outputPath), os.ModePerm)
 		file, err := os.Create(outputPath)
 		if err != nil {
@@ -845,7 +789,6 @@ func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For GET: Render the HTML page.
 	w.Header().Set("Content-Type", "text/html")
 	html := `<!DOCTYPE html>
 <html lang="en">
@@ -914,7 +857,6 @@ func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(html))
 }
 
-// SessionStatus represents the structure for a session.
 type SessionStatus struct {
 	ID      int    `json:"id"`
 	Port    int    `json:"port"`
@@ -922,13 +864,9 @@ type SessionStatus struct {
 	Updated string `json:"updated"`
 }
 
-// readSessionStatusHandler reads the active session data from the file
-// and displays it in an HTML table.
 func readSessionStatusHandler(w http.ResponseWriter, r *http.Request) {
 	filePath := "../datacenter/activesession.json"
 	var sessions []SessionStatus
-
-	// Check if the file exists and read its contents.
 	if _, err := os.Stat(filePath); err == nil {
 		data, err := ioutil.ReadFile(filePath)
 		if err != nil {
@@ -940,11 +878,9 @@ func readSessionStatusHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// If file doesn't exist, we'll just show an empty list.
 		sessions = []SessionStatus{}
 	}
 
-	// Build the HTML page.
 	w.Header().Set("Content-Type", "text/html")
 	html := `<!DOCTYPE html>
 <html lang="en">
@@ -984,4 +920,73 @@ func readSessionStatusHandler(w http.ResponseWriter, r *http.Request) {
 </body>
 </html>`
 	w.Write([]byte(html))
+}
+
+// ----------------------
+// Middleware Helpers
+// ----------------------
+
+func setHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set(contentTypeKey, contentTypeVal)
+}
+
+func withCORS(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		handler(w, r)
+	}
+}
+func withCORSStat(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+}
+
+// ----------------------
+// Main Function
+// ----------------------
+
+func main() {
+	// Start migration subscription in a goroutine.
+	go subscribeMigration()
+
+	http.HandleFunc("/saveData", withCORS(saveDataHandler))
+	http.HandleFunc("/tweet", withCORS(tweetHandler))
+	http.HandleFunc("/tweeturl", withCORS(tweetURLHandler))
+	http.HandleFunc("/api/token-metadata", withCORS(getTokenMetadata))
+	http.HandleFunc("/fetch-data", withCORS(fetchKeysAndDataHandler))
+	http.HandleFunc("/fetch-holders", withCORS(fetchHolderKeysAndDataHandler))
+	http.HandleFunc("/add-proxies", withCORS(addProxiesHandler))
+	http.HandleFunc("/add-cookies", withCORS(addCookiesHandler))
+	http.HandleFunc("/add-address", withCORS(addAddressHandler))
+	http.HandleFunc("/session-status", withCORS(readSessionStatusHandler))
+
+	staticPath := filepath.Join("..", "static")
+	fs := http.FileServer(http.Dir(staticPath))
+	http.Handle("/static/", withCORSStat(http.StripPrefix("/static/", fs)))
+
+	addressPath := filepath.Join("..", "addresses")
+	fs_addr := http.FileServer(http.Dir(addressPath))
+	http.Handle("/addresses/", withCORSStat(http.StripPrefix("/addresses/", fs_addr)))
+
+	slptokenPath := filepath.Join("..", "spltoken")
+	fs_slptkn := http.FileServer(http.Dir(slptokenPath))
+	http.Handle("/spltoken/", withCORSStat(http.StripPrefix("/spltoken/", fs_slptkn)))
+
+	fmt.Println("Server running on http://localhost:3300")
+	http.ListenAndServe(":3300", nil)
 }

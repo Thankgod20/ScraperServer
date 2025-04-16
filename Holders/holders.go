@@ -332,7 +332,7 @@ func (c *BitqueryClient) UpdateAndGetTransfers(tokenAddress string) (string, err
 	poolID, _ := getPoolID(tokenAddress)
 	fmt.Println("Pool ID", poolID)
 	// Build the GeckoTerminal API URL.
-	gtURL := "https://api.geckoterminal.com/api/v2/networks/solana/pools/" + poolID + "/trades?trade_volume_in_usd_greater_than=0"
+	gtURL := "https://api.geckoterminal.com/api/v2/networks/solana/pools/" + poolID + "/trades?trade_volume_in_usd_greater_than=1000"
 	// You could append additional query parameters like fileLimit if the API supports it.
 
 	req, err := http.NewRequest("GET", gtURL, nil)
