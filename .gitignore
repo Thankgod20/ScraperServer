@@ -1,6 +1,8 @@
 node_modules/
 run.py
-runy.py
 Scraper_User_Interface/
 ngrok.yml
 Server/
+graphql.py
+datacenter/cookies.json
+datacenter/proxies.json

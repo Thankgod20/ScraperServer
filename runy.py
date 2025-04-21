@@ -1,141 +1,42 @@
-#How can i send data to active thread in python. (Note: Edit only the relevant part of the code)
+import base64
+import datetime
+import io
+import json
+import os
+import random
+import threading
+import time
+import queue
+from contextlib import contextmanager
+from typing import Dict, Optional, Any
+import redis
+import httpx
+import requests
+import asyncio
 # --- Global configuration ---
-NGROK_BASE = "https://38ff-105-113-90-199.ngrok-free.app"
-NGROK_REDIS = '5.tcp.eu.ngrok.io'
-NGROK_PORT = 19693
-MAX_CONCURRENT_BROWSERS = 5  # Reduced from 10 to prevent overloading
+NGROK_BASE = "http://127.0.0.1:8000"
+NGROK_REDIS = '127.0.0.1'
+NGROK_PORT = 6379
+MAX_CONCURRENT_SCRAPERS = 5  # Maximum concurrent API clients
 MAX_RETRIES = 3
-DRIVER_INIT_TIMEOUT = 30
 TWEET_LIMIT = 500
-SCROLL_LIMIT = 100
-SCROLL_WAIT = 5
 query_queue = queue.Queue()
-active_query =[]
-# ----------------------------
-# Helper Functions and Classes
-# ----------------------------
+active_query = []
 
-class BrowserManager:
-    """Manages browser instances and ensures proper cleanup"""
+# GraphQL endpoint and headers
+TWITTER_API_URL = "https://api.twitter.com/graphql/"
+TWITTER_SEARCH_ENDPOINT = "PE1rbi7nIaYbf6Wtv4Y_TQ/SearchTimeline"
 
-    def __init__(self):
-        self.active_drivers = {}
-        self.lock = threading.Lock()
+# Thread control
+shutdown_event = threading.Event()
+port_lock = threading.Lock()
 
-    def register(self, index, driver):
-        with self.lock:
-            self.active_drivers[index] = driver
-
-    def unregister(self, index):
-        with self.lock:
-            if index in self.active_drivers:
-                try:
-                    self.active_drivers[index].quit()
-                except Exception as e:
-                    print(f"[WARNING] Error closing driver {index}: {e}")
-                del self.active_drivers[index]
-
-    def cleanup_all(self):
-        with self.lock:
-            for index, driver in list(self.active_drivers.items()):
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
-            self.active_drivers.clear()
-
-# Create a global browser manager
-browser_manager = BrowserManager()
-
-def generate_unique_fingerprint(proxy_extension, user_agent, index):
-    """Set up Chrome options with a custom user agent and proxy extension."""
-    print(f"[Browser {index}] Setting up browser with unique fingerprint")
-    options = webdriver.ChromeOptions()
-
-    # Set the binary location (for Colab use chromium-browser)
-    options.binary_location = "/usr/bin/chromium-browser"
-
-    # Common Chrome args
-    args = [
-        "--headless=new",
-        "--no-sandbox",
-        "--disable-gpu",
-        "--disable-dev-shm-usage",
-        f"--remote-debugging-port={get_random_port()}",  # Unique debugging port
-        f"--user-agent={user_agent}",
-        "--disable-background-networking",
-        "--disable-sync",
-        "--disable-translate",
-        "--disable-notifications",
-        "--mute-audio",
-        "--no-first-run",
-        f"--user-data-dir=/tmp/chrome_profile_{index}"  # Use /tmp for temporary data
-    ]
-
-    for arg in args:
-        options.add_argument(arg)
-
-    # Add proxy extension
-    ext_file = f"/tmp/proxy_extension_{index}.zip"
-    with open(ext_file, "wb") as f:
-        f.write(base64.b64decode(proxy_extension))
-    options.add_extension(ext_file)
-
-    # Set page load timeout
-    options.page_load_strategy = 'eager'  # 'eager' loads DOM but not all resources
-
-    return options
-
-def scroll_to_bottom(driver):
-    """Scroll to the bottom of the page with error handling."""
-    try:
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        return True
-    except Exception as e:
-        print(f"[ERROR] Error scrolling: {e}")
-        return False
-
-def wait_for_page_load(driver, timeout=30):
-    """Wait for page to load with proper error handling."""
-    try:
-        WebDriverWait(driver, timeout).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
-
-        # Also wait for articles to appear
-        WebDriverWait(driver, timeout).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "article"))
-        )
-
-        # Wait for progress bar to disappear
-        WebDriverWait(driver, timeout).until_not(
-            EC.presence_of_element_located((By.CSS_SELECTOR, '[role="progressbar"]'))
-        )
-
-        return True
-    except TimeoutException:
-        print("[WARNING] Page load timed out")
-        return False
-    except Exception as e:
-        print(f"[ERROR] Error waiting for page load: {e}")
-        return False
-
-def is_port_available(port):
-    """Check if a port is available for use."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.bind(("", port))
-            return True
-        except OSError:
-            return False
+# --- Helper Functions ---
 
 def get_random_port():
-    """Get a random available port."""
-    for _ in range(10):  # Try up to 10 times
-        port = random.randint(10000, 65000)
-        if is_port_available(port):
-            return port
-    return 0  # Return 0 if no port found
+    """Get a random available port with thread safety."""
+    with port_lock:
+        return random.randint(10000, 65000)
 
 def update_session_status(id, port, status):
     """Update the status of a session in the remote file."""
@@ -197,33 +98,29 @@ def init_redis_client():
     print("[ERROR] Failed to connect to Redis after multiple attempts")
     return None
 
-def get_attr(elem, selector, attr):
-    """Safely get an attribute from an element."""
-    try:
-        child = elem.find_element(By.CSS_SELECTOR, selector)
-        return child.get_attribute(attr)
-    except Exception:
-        return ""
+def read_json_file(file_path, max_retries=3):
+    """Read JSON file from remote URL with retry logic."""
+    url = f"{NGROK_BASE}/{file_path}"
+    retry_count = 0
+    headers = {}
+    headers["ngrok-skip-browser-warning"] = "69420"
+    while retry_count < max_retries:
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            r.raise_for_status()
+            return r.json()
+        except requests.exceptions.RequestException as e:
+            print(f"[WARNING] Error reading {file_path} (attempt {retry_count+1}/{max_retries}): {e}")
+            retry_count += 1
+            if retry_count < max_retries:
+                time.sleep(5)
 
-def get_text(elem, selector):
-    """Safely get text from an element."""
-    try:
-        child = elem.find_element(By.CSS_SELECTOR, selector)
-        return child.text
-    except Exception:
-        return ""
+    print(f"[ERROR] Failed to read {file_path} after {max_retries} attempts")
+    return []
+
 def is_same_minute(t1, t2):
     return t1.replace(second=0, microsecond=0) == t2.replace(second=0, microsecond=0)
 
-# Helper: Safely get text from a tweet element.
-def get_text(tweet, selector):
-    try:
-        element = tweet.find_element(By.CSS_SELECTOR, selector)
-        return element.text
-    except Exception:
-        return ""
-
-# Helper: Safely append to a list.
 def safe_append_string(lst, value):
     lst.append(value)
     return lst
@@ -239,563 +136,857 @@ def safe_append_time(lst, value):
         lst.append(value)
     return lst
 
-# This function processes tweet elements and stores/updates tweet data in Redis.
-def get_element_data(query, tweets, time_count, plot_time, redis_client, index):
-    redis_key_prefix = f"spltoken:{query}:"
-    for tweet in tweets:
-        try:
-            content = tweet.text
-        except Exception as e:
-            print(f"[DEBUG] [Browser {index}] Error getting tweet text: {e}")
-            continue
+# --- Twitter GraphQL API Functions ---
 
-        try:
-            link_element = tweet.find_element(By.CSS_SELECTOR, "a[role='link'][href*='/status/']")
-            status_url = link_element.get_attribute("href")
-        except Exception as e:
-            print(f"[DEBUG] [Browser {index}] Error retrieving status URL: {e}")
-            continue
+class TwitterCookieAuth:
+    """
+    Twitter/X authentication client that uses only cookies to authenticate.
+    This approach skips the login flow and directly uses stored cookies for authentication.
+    """
+    
+    BASE_URL = "https://x.com"
+    API_URL = "https://api.twitter.com"
+    GQL_URL = "https://x.com/i/api/graphql"
+    
+    def __init__(self, debug: bool = False, proxy: Optional[str] = None,userAgent: Optional[str]="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"):
+        """
+        Initialize Twitter cookie authentication client.
+        
+        Args:
+            debug: Enable debug mode to see detailed logs
+            proxy: Optional proxy to route requests through
+        """
+        self.debug = debug
+        self.proxy = proxy
+        self.client = httpx.AsyncClient(
+            follow_redirects=True,
+            proxy=proxy,
+            timeout=30.0
+        )
+        self.cookies = {}
+        self.headers = {
+            "User-Agent":userAgent,
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Content-Type": "application/json",
+            "Referer": "https://x.com/",
+            "Origin": "https://x.com"
+        }
+        
+    def _log(self, message: str) -> None:
+        """Log message if debug mode is enabled"""
+        if self.debug:
+            print(f"[DEBUG] {message}")
+    
+    def set_cookies(self, cookies: Dict[str, str]) -> None:
+        """
+        Set cookies for authentication
+        
+        Args:
+            cookies: Dictionary of cookie name-value pairs
+        """
+        self.cookies = cookies
+        
+        # Extract the csrf token from cookies if present
+        if "ct0" in cookies:
+            self.headers["x-csrf-token"] = cookies["ct0"]
 
-        redis_key = f"{redis_key_prefix}{hash(status_url)}"
-        try:
-            existing_data = redis_client.get(redis_key)
-        except Exception as e:
-            print(f"[ERROR] [Browser {index}] Redis error while getting key: {e}")
-            continue
-
-        # If tweet does not exist in Redis, extract details and store new data.
-        if existing_data is None:
-            try:
-                datetime_element = tweet.find_element(By.CSS_SELECTOR, "time")
-                datetime_value = datetime_element.get_attribute("datetime")
-            except Exception as e:
-                datetime_value = ""
-                print(f"[DEBUG] [Browser {index}] Error getting datetime attribute: {e}")
-
-            try:
-                profile_img_element = tweet.find_element(By.CSS_SELECTOR, 'div[data-testid="Tweet-User-Avatar"] img')
-                profile_img_url = profile_img_element.get_attribute("src")
-            except Exception as e:
-                profile_img_url = ""
-                print(f"[DEBUG] [Browser {index}] Error getting profile image: {e}")
-
-            new_data = {
-                "tweet": content,
-                "status": status_url,
-                "post_time": datetime_value,
-                "profile_image": profile_img_url,
-                "params": {
-                    "likes": [get_text(tweet, "[data-testid='like']")],
-                    "retweet": [get_text(tweet, "[data-testid='retweet']")],
-                    "comment": [get_text(tweet, "[data-testid='reply']")],
-                    "views": [get_text(tweet, "a[aria-label*='views']")],
-                    "time": [time_count],
-                    "plot_time": [plot_time.isoformat() if isinstance(plot_time, datetime.datetime) else plot_time]
-                }
+        self.headers.update({
+        "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+        "x-twitter-auth-type": "OAuth2Session",
+        "x-twitter-active-user": "yes",
+        "x-twitter-client-language": "en",
+        })
+            
+        self._log(f"Set cookies: {cookies}")
+    async def close(self):
+        """Close the HTTP client"""
+        await self.client.aclose()
+    async def verify_auth(self) -> bool:
+        """
+        Verify if the provided cookies are valid for authentication
+        
+        Returns:
+            True if authentication is valid, False otherwise
+        """
+        # Try to access the home timeline, which requires authentication
+        url = f"{self.GQL_URL}/ci_OQZ2k0rG0Ax_lXRiWVA/HomeTimeline"
+        
+        data = {
+            "variables": {
+                "count": 1,
+                "includePromotedContent": True,
+                "latestControlAvailable": True,
+                "requestContext": "launch",
+                "withCommunity": True
+            },
+            "features": {
+                "rweb_video_screen_enabled": False,
+                "profile_label_improvements_pcf_label_in_post_enabled": True,
+                "rweb_tipjar_consumption_enabled": True,
+                "responsive_web_graphql_exclude_directive_enabled": True,
+                "verified_phone_label_enabled": False,
+                "creator_subscriptions_tweet_preview_api_enabled": True,
+                "responsive_web_graphql_timeline_navigation_enabled": True,
+                "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+                "premium_content_api_read_enabled": False,
+                "communities_web_enable_tweet_community_results_fetch": True,
+                "c9s_tweet_anatomy_moderator_badge_enabled": True,
+                "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+                "responsive_web_grok_analyze_post_followups_enabled": True,
+                "responsive_web_jetfuel_frame": False,
+                "responsive_web_grok_share_attachment_enabled": True,
+                "articles_preview_enabled": True,
+                "responsive_web_edit_tweet_api_enabled": True,
+                "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+                "view_counts_everywhere_api_enabled": True,
+                "longform_notetweets_consumption_enabled": True,
+                "responsive_web_twitter_article_tweet_consumption_enabled": True,
+                "tweet_awards_web_tipping_enabled": False,
+                "responsive_web_grok_show_grok_translated_post": False,
+                "responsive_web_grok_analysis_button_from_backend": True,
+                "creator_subscriptions_quote_tweet_preview_enabled": False,
+                "freedom_of_speech_not_reach_fetch_enabled": True,
+                "standardized_nudges_misinfo": True,
+                "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+                "longform_notetweets_rich_text_read_enabled": True,
+                "longform_notetweets_inline_media_enabled": True,
+                "responsive_web_grok_image_annotation_enabled": True,
+                "responsive_web_enhance_cards_enabled": False
             }
-            try:
-                redis_client.set(redis_key, json.dumps(new_data))
-            except Exception as e:
-                print(f"[ERROR] [Browser {index}] Redis error while saving new tweet: {e}")
+        }
 
-        else:
-            # If tweet exists, update its metrics if the last update wasn’t in the same minute.
-            try:
-                existing_entry = json.loads(existing_data)
-            except Exception as e:
-                print(f"[ERROR] [Browser {index}] Error parsing existing Redis data: {e}")
-                continue
-
-            params = existing_entry.get("params", {})
-            plot_time_list = params.get("plot_time", [])
-            last_plot_time = None
-            if plot_time_list:
-                try:
-                    last_plot_time = datetime.datetime.fromisoformat(plot_time_list[-1])
-                except Exception as e:
-                    last_plot_time = None
-
-            if not last_plot_time or not is_same_minute(last_plot_time, plot_time):
-                params["likes"] = safe_append_string(params.get("likes", []), get_text(tweet, "[data-testid='like']"))
-                params["retweet"] = safe_append_string(params.get("retweet", []), get_text(tweet, "[data-testid='retweet']"))
-                params["comment"] = safe_append_string(params.get("comment", []), get_text(tweet, "[data-testid='reply']"))
-                params["views"] = safe_append_string(params.get("views", []), get_text(tweet, "a[aria-label*='views']"))
-                params["time"] = safe_append_int(params.get("time", []), time_count)
-                params["plot_time"] = safe_append_time(params.get("plot_time", []), plot_time)
-                existing_entry["params"] = params
-                try:
-                    redis_client.set(redis_key, json.dumps(existing_entry))
-                except Exception as e:
-                    print(f"[ERROR] [Browser {index}] Redis error while updating tweet: {e}")
-
-def scrape_and_save_tweet(query, driver, index,time_count, plot_time):
-    """Scrape tweets and save them to Redis."""
-    all_tweets = set()
-    all_status = []
-    previous_tweet_count = 0
-    number_scroll = 0
-
-    redis_client = init_redis_client()
-    if not redis_client:
-        print(f"[ERROR] [Browser {index}] Failed to initialize Redis client")
-        return False
-
-    start_time = time.time()
-
-    try:
-        print(f"[INFO] [Browser {index}] Starting tweet scraping for query: {query}")
-
-        while True:
-            try:
-                tweets = driver.find_elements(By.CSS_SELECTOR, "article")
-
-                for tweet in tweets:
-                    # Use the tweet element's ID to check if we've seen it
-                    tweet_id = tweet.get_attribute("id") or str(hash(tweet.text))
-
-                    if tweet_id in all_tweets:
-                        continue
-
-                    all_tweets.add(tweet_id)
-
-                    try:
-                        link_element = tweet.find_element(By.CSS_SELECTOR, "a[role='link'][href*='/status/']")
-                        status_url = link_element.get_attribute("href")
-
-                        if status_url and status_url not in all_status:
-                            print(f"[INFO] [Browser {index}] Found tweet URL: {status_url}")
-                            all_status.append(status_url)
-
-                            print(f"=== Tweet Exist for Browser:- {index} Query:- {query}")
-                            # Process all tweets (mimicking the Go routine that processes tweets concurrently)
-                            get_element_data(query, tweets, time_count, plot_time, redis_client, index)
-                            # Store in Redis
-                            '''
-                            if redis_client:
-                                key = f"tweet:{query}:{hash(status_url)}"
-                                data = {
-                                    "url": status_url,
-                                    "query": query,
-                                    "timestamp": datetime.datetime.now().isoformat(),
-                                    "scraper_index": index
-                                }
-                                try:
-                                    redis_client.set(key, json.dumps(data))
-                                except Exception as e:
-                                    print(f"[ERROR] [Browser {index}] Redis error: {e}")
-                            '''
-                    except Exception as e:
-                        print(f"[DEBUG] [Browser {index}] Error processing tweet: {e}")
-                        continue
-
-                current_count = len(all_status)
-                print(f"[INFO] [Browser {index}] Tweet Count: {current_count}, Previous: {previous_tweet_count}")
-
-                # Check termination conditions
-                if (current_count == previous_tweet_count or
-                    current_count >= TWEET_LIMIT or
-                    number_scroll >= SCROLL_LIMIT or
-                    time.time() - start_time > 300):  # 5 minute timeout
-                    print(f"[INFO] [Browser {index}] Scraping complete: {len(all_status)} tweets found")
-                    break
-
-                previous_tweet_count = current_count
-
-                # Scroll and wait
-                if not scroll_to_bottom(driver):
-                    print(f"[WARNING] [Browser {index}] Failed to scroll, stopping")
-                    break
-
-                number_scroll += 1
-                time.sleep(SCROLL_WAIT)
-
-            except InvalidSessionIdException:
-                print(f"[ERROR] [Browser {index}] Session ID is invalid")
-                return False
-            except Exception as e:
-                print(f"[ERROR] [Browser {index}] Error during scraping loop: {e}")
-                return False
-
-        return True
-
-    except Exception as e:
-        print(f"[ERROR] [Browser {index}] Scraping failed: {e}")
-        return False
-
-def create_proxy_extension(ip, port, username, password):
-    """Create a Chrome extension for proxy authentication."""
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-        manifest = r'''{
-    "version": "1.0.0",
-    "manifest_version": 2,
-    "name": "Chrome Proxy",
-    "permissions": [
-        "proxy",
-        "webRequest",
-        "webRequestBlocking",
-        "tabs",
-        "storage",
-        "<all_urls>"
-    ],
-    "background": {
-        "scripts": ["background.js"]
-    },
-    "minimum_chrome_version": "76.0.0"
-}'''
-        zipf.writestr("manifest.json", manifest)
-
-        background = f'''var config = {{
-    mode: "fixed_servers",
-    rules: {{
-        singleProxy: {{
-            scheme: "http",
-            host: "{ip}",
-            port: parseInt("{port}")
-        }},
-        bypassList: ["localhost"]
-    }}
-}};
-
-chrome.proxy.settings.set({{ value: config, scope: "regular" }}, function() {{
-    console.log("Proxy settings applied");
-}});
-
-chrome.webRequest.onAuthRequired.addListener(
-    function(details) {{
-        return {{
-            authCredentials: {{
-                username: "{username}",
-                password: "{password}"
-            }}
-        }};
-    }},
-    {{ urls: ["<all_urls>"] }},
-    ["blocking"]
-);'''
-        zipf.writestr("background.js", background)
-    return base64.b64encode(buffer.getvalue()).decode()
-
-def read_json_file(file_path, max_retries=3):
-    """Read JSON file from remote URL with retry logic."""
-    url = f"{NGROK_BASE}/{file_path}"
-    retry_count = 0
-
-    while retry_count < max_retries:
+        
         try:
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
-            return r.json()
-        except requests.exceptions.RequestException as e:
-            print(f"[WARNING] Error reading {file_path} (attempt {retry_count+1}/{max_retries}): {e}")
-            retry_count += 1
-            if retry_count < max_retries:
-                time.sleep(5)
-
-    print(f"[ERROR] Failed to read {file_path} after {max_retries} attempts")
-    return []
-
-def read_json_file_cookie(file_path):
-    return read_json_file(file_path)
-
-def read_json_file_proxy(file_path):
-    return read_json_file(file_path)
-
-# ----------------------------
-# Scraping and Threading Functions
-# ----------------------------
-
-def initialize_driver(chrome_options, index):
-    """Initialize the Chrome driver with proper error handling."""
-    retry_count = 0
-    while retry_count < MAX_RETRIES:
-        try:
-            print(f"[INFO] [Browser {index}] Initializing driver (attempt {retry_count+1})")
-            # Set unique port for ChromeDriver
-            unique_port = str(get_random_port())
-            os.environ["CHROMEDRIVER_PORT"] = unique_port
-            print(f"[INFO] Using CHROMEDRIVER_PORT: {unique_port}")
-
-            chrome_service = ChromeService(port=unique_port)
-            driver = webdriver.Chrome(options=chrome_options, service=chrome_service)
-            driver.set_page_load_timeout(DRIVER_INIT_TIMEOUT)
-
-            # Register with browser manager
-            browser_manager.register(index, driver)
-
-            return driver
+            response = await self.client.post(
+                url, 
+                headers=self.headers,
+                cookies=self.cookies,
+                json=data
+            )
+            
+            if response.status_code != 200:
+                self._log(f"Auth verification failed with status code: {response.status_code}")
+                return False
+                
+            # Check if we got a valid home timeline response
+            data = response.json()
+            if "data" in data and "home" in data["data"]:
+                self._log("Authentication verified successfully!")
+                return True
+            
+            self._log(f"Auth verification failed with response: {data}")
+            return False
+            
         except Exception as e:
-            print(f"[ERROR] [Browser {index}] Driver initialization failed: {e}")
-            retry_count += 1
-            if retry_count < MAX_RETRIES:
-                time.sleep(5)
+            self._log(f"Auth verification error: {str(e)}")
+            return False
+    
+    def check_auth(self):
+        """Check if the client is authenticated."""
+        try:
+            resp = self.session.get("https://twitter.com/i/api/1.1/account/verify_credentials.json", timeout=10)
+            return resp.status_code == 200
+        except Exception:
+            return False
+    ''' 
+    async def search_tweets(self, query, index, since_date=None,count: int = 100):
+        """Search tweets using GraphQL API."""
+        if since_date is None:
+            # Get yesterday's date
+            since_date = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        
+        print(f"[INFO] [Client {index}] Searching for tweets: {query} since {since_date}")
+        
+        search_query = f"{query} since:{since_date}"
+        
+        if not await self.verify_auth():
+            return None
 
-    return None
+        # GraphQL operation ID + name for SearchTimeline
+        url = f"{self.GQL_URL}/fL2MBiqXPk5pSrOS5ACLdA/SearchTimeline"
 
-def login_to_twitter(driver, cookie_value, index):
-    """Attempt to log in to Twitter using a cookie."""
-    try:
-        print(f"[INFO] [Browser {index}] Navigating to Twitter homepage")
-        driver.get("https://x.com")
-        time.sleep(10)
-        print(f"[INFO] [Browser {index}] Page loaded")
-
-        # Add authentication cookie
-        cookie = {
-            "name": "auth_token",
-            "value": cookie_value,
-            "path": "/",
-            "domain": "x.com",
-            "expiry": int(time.time() + 24*3600)
+        # Mirror exactly what the browser sends as query params
+        params = {
+            "variables": json.dumps({
+                "rawQuery": search_query,
+                "count": count,
+                "querySource": "recent_search_click",
+                "product": "Latest"
+            }),
+            "features": json.dumps({
+                "rweb_video_screen_enabled": False,
+                "profile_label_improvements_pcf_label_in_post_enabled": True,
+                "rweb_tipjar_consumption_enabled": True,
+                "responsive_web_graphql_exclude_directive_enabled": True,
+                "verified_phone_label_enabled": False,
+                "creator_subscriptions_tweet_preview_api_enabled": True,
+                "responsive_web_graphql_timeline_navigation_enabled": True,
+                "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+                "premium_content_api_read_enabled": False,
+                "communities_web_enable_tweet_community_results_fetch": True,
+                "c9s_tweet_anatomy_moderator_badge_enabled": True,
+                "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+                "responsive_web_grok_analyze_post_followups_enabled": True,
+                "responsive_web_jetfuel_frame": False,
+                "responsive_web_grok_share_attachment_enabled": True,
+                "articles_preview_enabled": True,
+                "responsive_web_edit_tweet_api_enabled": True,
+                "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+                "view_counts_everywhere_api_enabled": True,
+                "longform_notetweets_consumption_enabled": True,
+                "responsive_web_twitter_article_tweet_consumption_enabled": True,
+                "tweet_awards_web_tipping_enabled": False,
+                "responsive_web_grok_show_grok_translated_post": False,
+                "responsive_web_grok_analysis_button_from_backend": True,
+                "creator_subscriptions_quote_tweet_preview_enabled": False,
+                "freedom_of_speech_not_reach_fetch_enabled": True,
+                "standardized_nudges_misinfo": True,
+                "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+                "longform_notetweets_rich_text_read_enabled": True,
+                "longform_notetweets_inline_media_enabled": True,
+                "responsive_web_grok_image_annotation_enabled": True,
+                "responsive_web_enhance_cards_enabled": False
+            })
         }
 
         try:
-            driver.add_cookie(cookie)
-            print(f"[INFO] [Browser {index}] Cookie added successfully")
-        except Exception as e:
-            print(f"[ERROR] [Browser {index}] Error adding cookie: {e}")
-            return False
-
-        time.sleep(3)
-
-        # Refresh and check if login was successful
-        print(f"[INFO] [Browser {index}] Refreshing page...")
-        driver.refresh()
-        time.sleep(5)
-
-        # Check if login succeeded by looking for home element
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='AppTabBar_Home_Link']"))
+            # Use GET + params (not POST)
+            response = await self.client.get(
+                url,
+                headers=self.headers,
+                cookies=self.cookies,
+                params=params
             )
-            print(f"[INFO] [Browser {index}] Login successful")
-            return True
-        except TimeoutException:
-            print(f"[ERROR] [Browser {index}] Login failed - home element not found")
-            return False
+            if response.status_code != 200:
+                self._log(f"Failed to search tweets: {response.status_code}")
+                return None
 
-    except InvalidSessionIdException as e:
-        print(f"[ERROR] [Browser {index}] Invalid session during login: {e}")
-        return False
-    except Exception as e:
-        print(f"[ERROR] [Browser {index}] Login error: {e}")
-        return False
+            data = response.json()
+            timeline = (
+                data
+                .get("data", {})
+                .get("search_by_raw_query", {})             # snscrape shows this wrapper :contentReference[oaicite:0]{index=0}
+                .get("search_timeline")                     # then your actual timeline object :contentReference[oaicite:1]{index=1}
+                .get("timeline")                     # then your actual timeline object :contentReference[oaicite:1]{index=1}
+            )
+            
+            instructions = timeline.get("instructions", [])
+            if not instructions:
+                return []
+            #print("Instructions",instructions)
+            entries = instructions[0].get("entries", [])
+            tweet_objs = []
+            for entry in entries:
+                # guard against non‑tweet entries
+                if entry.get("content", {}).get("itemContent", {}).get("tweet_results"):
+                    tweet_objs.append(self.map_entry_to_tweet_obj(entry))
 
-def scrape_twitter_search( index, chrome_options, cookie_value, result_queue,):
-    """Main function to scrape Twitter search results."""
-    driver = None
+            return tweet_objs
+        except Exception as e:
+            self._log(f"Error during search: {e}")
+            return None
+    '''       
+
+
+    async def search_tweets(
+        self,
+        address_query,
+        query: str,
+        iteration:int,
+        redis_client,
+        index: int,
+        since_date: str | None = None,
+        per_page: int = 20,
+        max_tweets: int = 50,
+        pause_seconds: float = 5.0
+    ) -> list[dict] | None:
+        """Search tweets using GraphQL API with cursor‑based pagination.
+        
+        - per_page: number of tweets to request per page (server may cap it).
+        - max_tweets: total tweets to accumulate before stopping.
+        - pause_seconds: throttle between calls to avoid rate limits.
+        """
+        # 1) Determine since_date
+        if since_date is None:
+            since_date = (
+                datetime.datetime.now() - datetime.timedelta(days=1)
+            ).strftime("%Y-%m-%d")
+        print(f"[INFO] [Client {index}] Searching for tweets: {query} since {since_date}")
+        search_query = f"{query} since:{since_date}"
+        
+        # 2) Ensure authentication
+        if not await self.verify_auth():
+            return None
+
+        url = f"{self.GQL_URL}/fL2MBiqXPk5pSrOS5ACLdA/SearchTimeline"
+        all_tweets: list[dict] = []
+        cursor: str | None = None
+        time_count = 2 * (iteration + 1)
+        plot_time = datetime.datetime.utcnow()
+        # 3) Build the constant part of variables & features
+        base_vars = {
+            "rawQuery": search_query,
+            "count": per_page,
+            "querySource": "recent_search_click",
+            "product": "Latest"
+        }
+        features = {
+            "rweb_video_screen_enabled": False,
+                "profile_label_improvements_pcf_label_in_post_enabled": True,
+                "rweb_tipjar_consumption_enabled": True,
+                "responsive_web_graphql_exclude_directive_enabled": True,
+                "verified_phone_label_enabled": False,
+                "creator_subscriptions_tweet_preview_api_enabled": True,
+                "responsive_web_graphql_timeline_navigation_enabled": True,
+                "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+                "premium_content_api_read_enabled": False,
+                "communities_web_enable_tweet_community_results_fetch": True,
+                "c9s_tweet_anatomy_moderator_badge_enabled": True,
+                "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+                "responsive_web_grok_analyze_post_followups_enabled": True,
+                "responsive_web_jetfuel_frame": False,
+                "responsive_web_grok_share_attachment_enabled": True,
+                "articles_preview_enabled": True,
+                "responsive_web_edit_tweet_api_enabled": True,
+                "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+                "view_counts_everywhere_api_enabled": True,
+                "longform_notetweets_consumption_enabled": True,
+                "responsive_web_twitter_article_tweet_consumption_enabled": True,
+                "tweet_awards_web_tipping_enabled": False,
+                "responsive_web_grok_show_grok_translated_post": False,
+                "responsive_web_grok_analysis_button_from_backend": True,
+                "creator_subscriptions_quote_tweet_preview_enabled": False,
+                "freedom_of_speech_not_reach_fetch_enabled": True,
+                "standardized_nudges_misinfo": True,
+                "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+                "longform_notetweets_rich_text_read_enabled": True,
+                "longform_notetweets_inline_media_enabled": True,
+                "responsive_web_grok_image_annotation_enabled": True,
+                "responsive_web_enhance_cards_enabled": False
+        }
+
+        # 4) Loop pages until we hit max_tweets or run out
+        while len(all_tweets) < max_tweets:
+            vars_payload = base_vars.copy()
+            if cursor:
+                vars_payload["cursor"] = cursor
+                print("Variables",cursor)
+
+            params = {
+                "variables": json.dumps(vars_payload),
+                "features": json.dumps(features),
+            }
+            
+            try:
+                resp = await self.client.get(
+                    url,
+                    headers=self.headers,
+                    cookies=self.cookies,
+                    params=params
+                )
+                if resp.status_code != 200:
+                    self._log(f"Failed to search tweets: {resp.status_code}")
+                    if resp.status_code == 429:
+                        reset_ts = int(resp.headers.get("x-rate-limit-reset", time.time() + pause_seconds))
+                        wait_seconds = max(reset_ts - time.time(), pause_seconds)
+                        self._log(f"Rate limit hit; sleeping for {wait_seconds:.1f}s")
+                        await asyncio.sleep(wait_seconds)
+                        pause_seconds = min(pause_seconds * 2, 300.0)  # cap at 5 minutes
+                        continue
+                    break
+
+                data = resp.json()
+                timeline = (
+                    data.get("data", {})
+                        .get("search_by_raw_query", {})
+                        .get("search_timeline", {})
+                        .get("timeline", {})
+                )
+                #print(f"Search fortimeline:{json.dumps(timeline, indent=2)}")
+                instructions = timeline.get("instructions", [])
+                if not instructions:
+                    break
+
+                # 4a) Extract tweets from all instruction entries
+                page_tweets = []
+                for instr in instructions:
+                    for entry in instr.get("entries", []):
+                        item = entry.get("content", {}).get("itemContent", {})
+                        if item.get("tweet_results"):
+                            page_tweets.append(self.map_entry_to_tweet_obj(entry))
+                
+                count = self.save_tweets_to_redis(address_query,index,page_tweets,time_count,plot_time,redis_client)
+                if not page_tweets:
+                    break
+                all_tweets.extend(page_tweets)
+                data_entries_count = 0
+                for instr in instructions:
+                    if instr.get("type") == "TimelineAddEntries":
+                        entries = instr.get("entries", [])
+                        for entry in entries:
+                            content = entry.get("content", {})
+                            if content and content.get("entryType") != "TimelineTimelineCursor":
+                                data_entries_count += 1
+                print("[ Paginantion ] Moving next [Returns]",data_entries_count)
+                
+                next_cursor = None
+                for instr in instructions:
+                    # Handle TimelineAddEntries type
+                    if instr.get("type") == "TimelineAddEntries":
+                        entries = instr.get("entries", [])
+                        for entry_ in entries:
+                            content = entry_.get("content", {})
+                            entry_type = entry_.get("entryId", "")
+                            
+                            # Look for cursor entry
+                            if "cursor-bottom" in entry_type or content.get("cursorType") == "Bottom":
+                                value = content.get("value")
+                                print("[Got Next Page Cursor]")
+                                # Sometimes the cursor is nested deeper
+                                if not value and isinstance(content.get("cursor"), dict):
+                                    value = content.get("cursor", {}).get("value")
+                                
+                                if value:
+                                    next_cursor = value
+                                    break
+                    
+                    # Handle TimelineReplaceEntry type
+                    elif instr.get("type") == "TimelineReplaceEntry":
+                        entry_id = instr.get("entry_id_to_replace", "")
+                        entry_ = instr.get("entry", {})
+                        content = entry_.get("content", {})
+                        
+                        # Look for cursor entry
+                        if "cursor-bottom" in entry_id or content.get("cursorType") == "Bottom":
+                            value = content.get("value")
+                            print("[Got Next Page Cursor]")
+                            # Sometimes the cursor is nested deeper
+                            if not value and isinstance(content.get("cursor"), dict):
+                                value = content.get("cursor", {}).get("value")
+                            
+                            if value:
+                                next_cursor = value
+                                break
+                    
+                    if next_cursor:
+                        break
+                is_last_page = False
+                if not next_cursor or data_entries_count == 0 :
+                    self._log("====================No next page cursor found. Reached end of results.========================")
+                    break  # no more pages
+                
+                # Only update cursor if we found a valid one
+                cursor = next_cursor
+                self._log(f"[Browser {index}] Next cursor: {cursor[:20]}... Search: {address_query}")
+
+                # 4c) Throttle
+                if pause_seconds:
+                    await asyncio.sleep(pause_seconds)
+                
+                # Break if we've reached max tweets
+                if len(all_tweets) >= max_tweets:
+                    self._log(f"Reached max_tweets limit ({max_tweets})")
+                    break
+                    
+            except Exception as e:
+                self._log(f"Error during search: {str(e)}")
+                # Continue with next attempt rather than breaking completely
+                await asyncio.sleep(pause_seconds * 10)  # Wait longer after an error
+                continue
+
+        # 5) Return only up to max_tweets
+        return all_tweets[:max_tweets]
+    def map_entry_to_tweet_obj(self, entry):
+        """
+        Normalize a TimelineTweet entry into a flat dict.
+        Supports two structures:
+        1. result → tweet → legacy/core/user_results
+        2. result → legacy/core/user_results (no intermediate "tweet" key)
+        """
+        # drill down to the “result” object
+        result = entry["content"]["itemContent"]["tweet_results"]["result"]
+
+        # if there’s an intermediate "tweet" layer, unwrap it
+        tweet = result.get("tweet", result)
+
+        # legacy fields (text, counts, timestamps) live under tweet["legacy"]
+        legacy = tweet.get("legacy", {})
+
+        # user fields always under tweet["core"]["user_results"]["result"]
+        user = tweet.get("core", {}) \
+                    .get("user_results", {}) \
+                    .get("result", {})
+        uleg = user.get("legacy", {})
+
+        # normalize view count (new variants report it under result["views"]["count"])
+        if result.get("views", {}).get("count") is not None:
+            try:
+                views = int(result["views"]["count"])
+            except (ValueError, TypeError):
+                views = 0
+        else:
+            views = legacy.get("view_count", 0)
+
+        # parse the created_at timestamp
+        created_at_str = legacy.get("created_at", "")
+        try:
+            dt = datetime.datetime.strptime(created_at_str, "%a %b %d %H:%M:%S %z %Y")
+            post_time_iso = dt.isoformat()
+        except (ValueError, TypeError):
+            post_time_iso = created_at_str
+
+        screen_name = uleg.get("screen_name", "")
+        rest_id     = tweet.get("rest_id", "")
+
+        return {
+            "id":            rest_id,
+            "username":      screen_name,
+            "name":          uleg.get("name", ""),
+            "tweet":         legacy.get("full_text", ""),
+            "status":        f"https://x.com/{screen_name}/status/{rest_id}",
+            "post_time":     created_at_str,
+            "post_datetime": post_time_iso,
+            "profile_image": uleg.get("profile_image_url_https", ""),
+            "followers":     uleg.get("followers_count", 0),
+            "friends":       uleg.get("friends_count", 0),
+            "metrics": {
+                "likes":   legacy.get("favorite_count", 0),
+                "retweet": legacy.get("retweet_count", 0),
+                "comment": legacy.get("reply_count",  0),
+                "views":   views
+            }
+        }
+    
+    def save_tweets_to_redis(self, query,index, tweets, time_count, plot_time, redis_client):
+        """Save tweets to Redis with the same format as the Selenium version."""
+        if not redis_client:
+            print(f"[ERROR] [Client {index}] No Redis client available")
+            return
+        
+        redis_key_prefix = f"spltoken:{query}:"
+        saved_count = 0
+        
+        for tweet in tweets:
+            tweet_id = tweet.get("id")
+            status_url = tweet.get("status")
+            redis_key = f"{redis_key_prefix}{hash(status_url)}"
+            
+            try:
+                existing_data = redis_client.get(redis_key)
+            except Exception as e:
+                print(f"[ERROR] [Client {index}] Redis error while getting key: {e}")
+                continue
+                
+            # If tweet does not exist in Redis, store new data
+            if existing_data is None:
+                new_data = {
+                    "tweet": tweet.get("tweet"),
+                    "status": status_url,
+                    "post_time": tweet.get("post_datetime"),
+                    "profile_image": tweet.get("profile_image"),
+                    "followers": tweet.get("followers"),
+                    "friends": tweet.get("friends"),
+                    "params": {
+                        "likes": [str(tweet.get("metrics", {}).get("likes", 0))],
+                        "retweet": [str(tweet.get("metrics", {}).get("retweet", 0))],
+                        "comment": [str(tweet.get("metrics", {}).get("comment", 0))],
+                        "views": [str(tweet.get("metrics", {}).get("views", 0))],
+                        "time": [time_count],
+                        "plot_time": [plot_time.isoformat() if isinstance(plot_time, datetime.datetime) else plot_time]
+                    }
+                }
+                
+                try:
+                    redis_client.set(redis_key, json.dumps(new_data))
+                    saved_count += 1
+                except Exception as e:
+                    print(f"[ERROR] [Client {index}] Redis error while saving new tweet: {e}")
+            
+            else:
+                # If tweet exists, update its metrics if not in the same minute
+                try:
+                    existing_entry = json.loads(existing_data)
+                except Exception as e:
+                    print(f"[ERROR] [Client {index}] Error parsing existing Redis data: {e}")
+                    continue
+                    
+                params = existing_entry.get("params", {})
+                plot_time_list = params.get("plot_time", [])
+                last_plot_time = None
+                
+                if plot_time_list:
+                    try:
+                        last_plot_time = datetime.datetime.fromisoformat(plot_time_list[-1])
+                    except Exception:
+                        last_plot_time = None
+                        
+                if not last_plot_time or not is_same_minute(last_plot_time, plot_time):
+                    params["likes"] = safe_append_string(params.get("likes", []), str(tweet.get("metrics", {}).get("likes", 0)))
+                    params["retweet"] = safe_append_string(params.get("retweet", []), str(tweet.get("metrics", {}).get("retweet", 0)))
+                    params["comment"] = safe_append_string(params.get("comment", []), str(tweet.get("metrics", {}).get("comment", 0)))
+                    params["views"] = safe_append_string(params.get("views", []), str(tweet.get("metrics", {}).get("views", 0)))
+                    params["time"] = safe_append_int(params.get("time", []), time_count)
+                    params["plot_time"] = safe_append_time(params.get("plot_time", []), plot_time)
+                    existing_entry["params"] = params
+                    
+                    try:
+                        redis_client.set(redis_key, json.dumps(existing_entry))
+                        saved_count += 1
+                    except Exception as e:
+                        print(f"[ERROR] [Client {index}] Redis error while updating tweet: {e}")
+        
+        print(f"[INFO] [Client {index}] Saved/updated {saved_count} tweets in Redis")
+        return saved_count
+
+# --- Thread Functions ---
+
+async def process_tweets(index, cookies, result_queue,ip_address,port_str,proxy_username,proxy_password,random_user_agent ):
+    """Process tweets using the GraphQL API instead of Selenium."""
     port = get_random_port()
-
     update_session_status(index, port, "initializing")
-
+    
     try:
-        # Initialize driver
-        driver = initialize_driver(chrome_options, index)
-        if not driver:
-            result_queue.put({"index": index, "success": False, "error": "Failed to initialize driver"})
+        # Initialize GraphQL client
+        proxy_url = f"http://{proxy_username}:{proxy_password}@{ip_address}:{port_str}"
+        print(f"[INFO] Starting thread for browser {index} with UA: {random_user_agent[:30]}...On {proxy_url}")
+        client = TwitterCookieAuth(debug=True,proxy=proxy_url,userAgent=random_user_agent)
+        
+        # Check if login works
+        try:
+            client.set_cookies(cookies)
+            # Verify authentication
+            is_authenticated = await client.verify_auth()
+            print(f"Authentication status: {'Success' if is_authenticated else 'Failed'}")
+        except Exception as e:
+            print(f"Error: {str(e)}")
+        ''' 
+        if not client.check_auth():
+            print(f"[ERROR] [Client {index}] Authentication failed")
+            result_queue.put({"index": index, "success": False, "error": "Authentication failed"})
             update_session_status(index, port, "failed")
             return
-
-        # Log in to Twitter
-        if not login_to_twitter(driver, cookie_value, index):
-            result_queue.put({"index": index, "success": False, "error": "Login failed"})
-            update_session_status(index, port, "failed")
-            return
-
-        # Mark session as active
+        '''    
+        print(f"[INFO] [Client {index}] Authentication successful")
         update_session_status(index, port, "active")
-
-        # Get query from queue
+        
+        # Initialize Redis client
+        redis_client = init_redis_client()
+        if not redis_client:
+            print(f"[ERROR] [Client {index}] Failed to initialize Redis client")
+            result_queue.put({"index": index, "success": False, "error": "Redis initialization failed"})
+            update_session_status(index, port, "failed")
+            return
+        
+        # Process queries
         global query_queue
         global active_query
         unmatched_queries = []
-        query = None
-        try:
-            while True:
-                time.sleep(10)
-                sizex = query_queue.qsize()
-                if sizex >0:
-                    found_match = False
-                    for _ in range(sizex):
-                        query_ = query_queue.get()  # Reduced timeout
+        query_array = []
+        iteration = 0
+        itt = 0
+        
+        while not shutdown_event.is_set():
+            print(f"[INFO] [Client {index}], [ROUND]: {iteration}")
+            
+            # Get queries from queue
+            try:
+                size_x = query_queue.qsize()
+                if size_x > 0:
+                    for _ in range(size_x):
+                        query_ = query_queue.get()
+                        
                         if shutdown_event.is_set():
-                            print(f"[INFO] [Browser {index}] Received shutdown signal, exiting")
+                            print(f"[INFO] [Client {index}] Received shutdown signal, exiting")
                             break
-                        if query_ in active_query:
-                            print(f"[INFO] [Browser {index}] Query already active, skipping: {query_}")
+                            
+                        # Handle removal requests
+                        address_field = query_.get('address', '')
+                        if address_field.startswith("remove_"):
+                            addr_to_remove = address_field[len("remove_"):]
+                            original_length = len(query_array)
+                            query_array = [q for q in query_array if q.get('address', '') != addr_to_remove]
+                            if len(query_array) < original_length:
+                                print(f"[INFO] [Client {index}] Removed query with address: {addr_to_remove}")
+                            else:
+                                print(f"[INFO] [Client {index}] No query found with address: {addr_to_remove} to remove")
                             continue
+                            
+                        # Check if query is for this client
                         if query_.get('index') == index:
-                            print(f"[INFO] [Browser {index}] Found matching query: {query_}")
-                            query = query_
-                            active_query.append(query_)
-                            found_match = True
-                            break
-
+                            new_addr = query_.get('address', '')
+                            # Avoid duplicates
+                            if any(q.get('address', '') == new_addr for q in query_array):
+                                print(f"[INFO] [Client {index}] Duplicate address detected, skipping: {new_addr}")
+                            else:
+                                if len(query_array) < 6:
+                                    print(f"[INFO] [Client {index}] Found matching query: {query_}")
+                                    query_array.append(query_)
+                                    iteration = len(query_array)-1
                         else:
-                            print(f"[INFO] [Browser {index}] Non-matching query: {query_} Index {query_.get('index')}")
+                            print(f"[INFO] [Client {index}] Non-matching query: {query_} Index {query_.get('index')}")
                             unmatched_queries.append(query_)
+                    
+                    # Put unmatched queries back in the queue
                     for item in unmatched_queries:
                         query_queue.put(item)
                     unmatched_queries.clear()
+                    
+                # Prune stale: held >3h AND no tweets in last 1h
+                now = datetime.datetime.utcnow()
+                before = len(query_array)
+                query_array[:] = [e for e in query_array if not (
+                    now - e['added_at'] > datetime.timedelta(hours=3)
+                    and now - e['last_activity'] > datetime.timedelta(hours=1)
+                )]
+                if len(query_array) < before:
+                    print(f"[INFO] Pruned {before-len(query_array)} stale entries at {now.isoformat()}")
 
-                    if found_match:
-                        break
-
-        except queue.Empty:
-            # No more items in queue
-            print(f"[INFO] [Browser {index}] Non-matching query")
-            pass
-
-        for i in range(100):
-            if shutdown_event.is_set():
-                print(f"[INFO] [Browser {index}] Received shutdown signal, exiting")
-                break
-            print(f"[INFO] [Browser {index}], [ROUND]: {i} ")
-            try:
-                
-                if query is not None:#if query is not None and query.get('index') == index:
-                    print(f"[INFO] [Browser {index}] Full Query: {query} Processing query type: {type(query).__name__}")
+                # Process queries
+                if len(query_array) > 0:
+                    print(f"[INFO] [Client {index}] Full Query Array: {query_array} Processing")
                     now = datetime.datetime.now()
-
-                    # Subtract 24 hours (1 day) to get yesterday's datetime
-                    yesterday = now - datetime.timedelta(days=1)
-
-                    # Format yesterday's date as "YYYY-MM-DD"
-                    yesterdate = yesterday.strftime("%Y-%m-%d")
-                    # Navigate to search URL
-                    update_session_status(index, port, f"Searching Count: {i}")
-                    search_url = f"https://x.com/search?q={query['address']}%20OR%20{query['symbol']}%20since:{yesterdate}&src=typed_query"
-                    print(f"[INFO] [Browser {index}] Navigating to: {search_url}")
-                    driver.get(search_url)
-
-                    # Wait for page to load
-                    print(f"[INFO] [Browser {index}] Waiting for search page to load...")
-                    if not wait_for_page_load(driver):
-                        print(f"[ERROR] [Browser {index}] Search page failed to load")
-                        result_queue.put({"index": index, "success": False, "error": "Search page failed to load"})
-                        return
-
-                    # Scrape tweets
-                    print(f"[INFO] [Browser {index}] Starting to scrape tweets")
-                    time_count = 2*i
-                    plot_time = datetime.datetime.utcnow()
-                    if scrape_and_save_tweet(query['address'], driver, index,time_count, plot_time):
-                        print(f"[INFO] [Browser {index}] Scraping completed successfully")
+                    
+                    # Get yesterday's date as "YYYY-MM-DD"
+                    yesterday = (now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+                    
+                    update_session_status(index, port, f"Searching Count: {iteration} of ArraySize {len(query_array)} Total Iteration {itt}")
+                    
+                    # Alternate between "Top" and "Latest" modes
+                    #search_mode = (itt + iteration) % 2
+                    #if search_mode == 0:
+                    update_session_status(index, port, f"Searching Count: {iteration} of ArraySize {len(query_array)} Total Iteration {itt} [Top]")
+                    search_query = f"{query_array[iteration]['address']} OR ${query_array[iteration]['symbol']}"
+                    
+                    print(f"[INFO] [Client {index}] Starting search for: {search_query}")
+                    
+                    # Search for tweets
+                    search_results = await client.search_tweets(query_array[iteration]['address'],search_query,iteration,redis_client, index,since_date=yesterday)
+                    print(f"Search for Meme coin: {json.dumps(search_results, indent=2)}")
+                    if search_results:
+                        # Save tweets to Redis
+                        post_time_str = search_results[0].get('post_time')
+                        if post_time_str:
+                            try:
+                                post_time = datetime.datetime.strptime(post_time_str, '%a %b %d %H:%M:%S %z %Y')
+                                print(f"[Client {index}] Tweet Latest Time is: {post_time} ")
+                                query_array[iteration]['last_activity'] = post_time
+                            except ValueError as e:
+                                print(f"Error parsing post_time: {e}")
+                                #entry['last_activity'] = datetime.datetime.utcnow()
+                        
+                        print(f"[Browser {index}]: Search for {query_array[iteration]['address']} Completed!!")
+                        time_count = 2 * (iteration + 1)
+                        plot_time = datetime.datetime.utcnow()
+                        saved_count = client.save_tweets_to_redis(
+                            query_array[iteration]['address'], 
+                            index,
+                            search_results,
+                            time_count,
+                            plot_time,
+                            redis_client
+                        )
+                        
+                        print(f"[INFO] [Client {index}] Search completed successfully. Saved {saved_count} tweets.")
                         result_queue.put({"index": index, "success": True, "error": ""})
                     else:
-                        print(f"[ERROR] [Browser {index}] Scraping failed")
-                        result_queue.put({"index": index, "success": False, "error": "Scraping failed"})
-
-            except queue.Empty:
-                print(f"[INFO] [Browser {index}] No query received within timeout")
-                result_queue.put({"index": index, "success": False, "error": "Query timeout"})
-            time.sleep(10)
-
+                        print(f"[WARNING] [Client {index}] No tweets found or search failed")
+                        result_queue.put({"index": index, "success": False, "error": "No tweets found"})
+                
+                # Increment iteration counters
+                iteration += 1
+                itt += 1
+                if iteration > (len(query_array) - 1) or iteration > 5:
+                    print(f"[INFO] [Client {index}] Reached max iterations. Resetting.")
+                    iteration = 0
+                
+                # Sleep between iterations
+                time.sleep(30)
+                
+            except Exception as e:
+                print(f"[ERROR] [Client {index}] Error in processing loop: {e}")
+                time.sleep(5)
+    
     except Exception as e:
-        print(f"[ERROR] [Browser {index}] Unhandled exception: {e}")
+        print(f"[ERROR] [Client {index}] Unhandled exception: {e}")
         result_queue.put({"index": index, "success": False, "error": str(e)})
-
+    
     finally:
         # Cleanup
+        await client.close()
         update_session_status(index, port, "inactive")
-        browser_manager.unregister(index)
 
-def run_scrape(ip_address, port_val, random_user_agent, cookie_value,
-               username, password, index, result_queue, semaphore):
-    """Run a scrape operation with proper resource management."""
+def run_scraper(cookies, index, result_queue,ip_address,port_str,proxy_username,proxy_password,random_user_agent,  semaphore):
+    """Run a scraper with proper resource management."""
     try:
-        print(f"[INFO] [Browser {index}] Starting scrape operation")
-        extension = create_proxy_extension(ip_address, port_val, username, password)
-        options = generate_unique_fingerprint(extension, random_user_agent, index)
-        scrape_twitter_search( index, options, cookie_value, result_queue)
+        print(f"[INFO] [Client {index}] Starting scraper")
+        
+        asyncio.run(process_tweets(index, cookies, result_queue,ip_address,port_str,proxy_username,proxy_password,random_user_agent, ))
     except Exception as e:
-        print(f"[ERROR] [Browser {index}] Error in run_scrape: {e}")
+        print(f"[ERROR] [Client {index}] Error in run_scraper: {e}")
         result_queue.put({"index": index, "success": False, "error": str(e)})
     finally:
         semaphore.release()
         update_session_status(index, 0, "END")
-        print(f"[INFO] [Browser {index}] Released semaphore")
-def send_query_to_thread(index, query_data):
-    """
-    Send data to a specific thread by tagging it with the thread index.
+        print(f"[INFO] [Client {index}] Released semaphore")
 
-    Args:
-        index (int): The index of the thread to send data to
-        query_data (dict): The query data to send
-    """
+def send_query_to_thread(index, query_data):
+    """Send data to a specific thread by tagging it with the thread index."""
     global query_queue
     # Tag the query with the target thread index
-    tagged_query = query_data.copy()  # Create a copy to avoid modifying the original    # Add thread index as identifier
-
+    tagged_query = query_data.copy()
+    
     # Add to the queue
     query_queue.put(tagged_query)
     print(f"[INFO] Sent query to thread {index}: {tagged_query}")
-shutdown_event = threading.Event()
-
-def worker(thread_id):
-    while not shutdown_event.is_set():
-        # Your thread work here
-        print(f"Thread {thread_id} working...")
-        time.sleep(1)
-    print(f"Thread {thread_id} shutting down gracefully.")
 
 def kill_all_active_threads():
+    """Signal all threads to shut down and clean up resources."""
     # Signal threads to shutdown
     shutdown_event.set()
-
+    
     # Give threads time to notice the shutdown signal
     time.sleep(1)
-
+    
     current = threading.current_thread()
     for t in threading.enumerate():
         if t is not current and t.daemon:
             print(f"[INFO] Waiting for thread {t.name} to finish...")
-            t.join(timeout=5)  # Increased timeout for cleanup
-
-    # Reset the browser manager to ensure all browser instances are properly closed
-    browser_manager.cleanup_all()
-
+            t.join(timeout=5)
+    
     # Reset shutdown event for future threads
     shutdown_event.clear()
-
+    
     print("[INFO] All threads have been terminated")
-# ----------------------------
-# Main Function
-# ----------------------------
+
+# --- Main Function ---
 
 def main():
-    """Main function with improved error handling and resource management."""
-
+    """Main function that orchestrates the Twitter scraping process using GraphQL API."""
+    
     kill_all_active_threads()
-    print("\n[INFO] ===== Starting Twitter scraper =====\n")
-
-    # Initialize
+    print("\n[INFO] ===== Starting Twitter GraphQL scraper =====\n")
+    
+    # Initialize variables
     addr_array = []
     cook_array = []
     prx_array = []
-    previous_length = 0
-
-    # Queues for thread communication
-    #query_queue = queue.Queue()
     global query_queue
     result_queue = queue.Queue()
-
-    # Limit concurrent browsers
-    semaphore = threading.Semaphore(MAX_CONCURRENT_BROWSERS)
+    
+    # Limit concurrent scrapers
+    semaphore = threading.Semaphore(MAX_CONCURRENT_SCRAPERS)
     threads = []
     active_threads = 0
-
+    
     # Reset session status
     update_session_status(0, 0, "NEW")
-
-    # User agent rotation
     user_agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/110.0"
     ]
-
     try:
         index = 0
         while True:
@@ -803,9 +994,9 @@ def main():
                 # Load configuration from remote files
                 print("[INFO] Loading configuration files...")
                 address_array = read_json_file("addresses/address.json")
-                cookies_array = read_json_file_cookie("datacenter/cookies.json")
-                proxies_array = read_json_file_proxy("datacenter/proxies.json")
-
+                cookies_array = read_json_file("datacenter/cookies.json")
+                proxies_array = read_json_file("datacenter/proxies.json")
+                
                 # Update address list
                 for entry in address_array:
                     if entry not in addr_array:
@@ -814,26 +1005,30 @@ def main():
                         thread_index = entry.get('index', 0)
                         send_query_to_thread(thread_index, entry)
                         print(f"[INFO] Added new address: {entry}")
-
+                
                 # Update cookies list
                 for entry in cookies_array:
-                    if entry["cookies"] not in cook_array:
-                        cook_array.append(entry["cookies"])
-                        print("[INFO] Added new cookie")
-
+                    cookie_dict = {
+                        "auth_token": entry.get("auth_token"),
+                        "ct0": entry.get("ct0")
+                    }
+                    if cookie_dict not in cook_array:
+                        cook_array.append(cookie_dict)
+                        print(f"[INFO] Added new cookie: {{...auth_token: {cookie_dict['auth_token'][:8]}..., ct0: {cookie_dict['ct0'][:8]}...}}")
+                
                 # Update proxies list
                 for entry in proxies_array:
                     if entry["proxies"] not in prx_array:
                         prx_array.append(entry["proxies"])
                         print("[INFO] Added new proxy")
-
                 # Print current status
-                print(f"[INFO] Status - Addresses: {len(addr_array)}, Cookies: {len(cook_array)}, Proxies: {len(prx_array)}, Active threads: {active_threads}")
-
+                print(f"[INFO] Status - Addresses: {len(addr_array)}, Cookies: {len(cook_array)}, Active threads: {active_threads}")
+                
                 # Start new threads if we have available cookies and semaphores
-                if index < len(cook_array) and active_threads < MAX_CONCURRENT_BROWSERS:
-                    # Get thread-specific data
+                if index < len(cook_array) and active_threads < MAX_CONCURRENT_SCRAPERS:
+                    # Get cookie
                     random_user_agent = user_agents[index % len(user_agents)]
+                    the_cookie = cook_array[index % len(cook_array)]
                     random_proxy = prx_array[index % len(prx_array)]
 
                     # Parse proxy details
@@ -848,76 +1043,70 @@ def main():
                     proxy_username = proxy_parts[2]
                     proxy_password = proxy_parts[3]
 
-                    # Get cookie
-                    the_cookie = cook_array[index % len(cook_array)]
-
                     # Acquire semaphore and start thread
-                    print(f"[INFO] Acquiring semaphore for browser {index}...")
+                    print(f"[INFO] Acquiring semaphore for client {index}...")
                     semaphore.acquire()
                     active_threads += 1
-
-                    print(f"[INFO] Starting thread for browser {index} with UA: {random_user_agent[:30]}...")
+                    
+                    print(f"[INFO] Starting thread for client {index}...")
                     t = threading.Thread(
-                        target=run_scrape,
-                        args=(ip_address, port_str, random_user_agent,
-                              the_cookie, proxy_username, proxy_password, index,
-                              result_queue, semaphore)
+                        target=run_scraper,
+                        args=(the_cookie, index, result_queue,ip_address,port_str,proxy_username,proxy_password,random_user_agent, semaphore)
                     )
-                    t.daemon = True  # Make thread daemon so it exits when main thread exits
+                    t.daemon = True
                     t.start()
                     threads.append(t)
-
-                    print(f"[INFO] Started thread for browser {index}")
+                    
+                    print(f"[INFO] Started thread for client {index}")
                     index += 1
                     time.sleep(5)  # Stagger thread starts
-
-                # Send queries to threads if we have new addresses
-                '''
-                if query_queue.qsize() > previous_length:
-                    for i in range(min(len(cook_array), active_threads)):
-                        #query_queue.put(addr_array[-1])  # Send newest address
-                        send_query_to_thread(i, addr_array[-1])
-                        print(f"[INFO] Sent query to browser {i}: {addr_array[-1]}")
-                    previous_length = len(addr_array)
-                '''
-
+                
                 # Check for thread results
                 try:
                     result = result_queue.get(timeout=1)
-                    #active_threads -= 1
-
+                    
                     if result["success"]:
-                        print(f"[INFO] Browser {result['index']} completed successfully")
+                        print(f"[INFO] Client {result['index']} completed successfully")
                     else:
-                        print(f"[WARNING] Browser {result['index']} failed: {result['error']}")
-
+                        print(f"[WARNING] Client {result['index']} failed: {result['error']}")
+                
                 except queue.Empty:
                     pass
-
+                
                 # Exit condition - adjust as needed
-                if index >= 5:  # For testing, just run 3 browsers
-                    print("[INFO] Test limit reached, stopping after 5 browsers")
+                if index >= 15:  # For testing, just run 15 clients
+                    print("[INFO] Test limit reached, stopping after 15 clients")
                     break
-
+                
                 time.sleep(1)  # Prevent CPU hogging
-
+            
             except Exception as e:
                 print(f"[ERROR] Error in main loop: {e}")
                 time.sleep(10)  # Wait before retrying
-
-        # Wait for all threads to complete
+        
+        # Wait for all threads to finish
         print("[INFO] Waiting for all threads to complete...")
         for t in threads:
             t.join(timeout=30)
-
+        
+        print("[INFO] All threads have completed or timed out")
+        
     except KeyboardInterrupt:
-        print("[INFO] Keyboard interrupt detected, shutting down")
-    finally:
-        # Cleanup
-        print("[INFO] Cleaning up resources...")
+        print("\n[WARNING] Keyboard interrupt received. Shutting down gracefully...")
         kill_all_active_threads()
-        browser_manager.cleanup_all()
-        print("[INFO] Scraper shutdown complete")
+        
+    except Exception as e:
+        print(f"[ERROR] Unhandled exception in main: {e}")
+        
+    finally:
+        # Final cleanup
+        print("[INFO] Cleanup resources...")
+        kill_all_active_threads()
+        
+        # Update final status
+        update_session_status(0, 0, "SHUTDOWN")
+        print("[INFO] ===== Twitter GraphQL scraper finished =====")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

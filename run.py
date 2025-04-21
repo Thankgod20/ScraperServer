@@ -79,11 +79,11 @@ def generate_unique_fingerprint(proxy_extension, user_agent, index):
     options = webdriver.ChromeOptions()
 
     # Set the binary location (for Colab use chromium-browser)
-    options.binary_location = "/usr/bin/chromium-browser"
+    #options.binary_location = "/usr/bin/chromium-browser"
 
     # Common Chrome args
     args = [
-        "--headless=new",
+        #"--headless=new",
         "--no-sandbox",
         "--disable-gpu",
         "--disable-dev-shm-usage",
@@ -449,57 +449,64 @@ def scrape_and_save_tweet(query, driver, index,time_count, plot_time):
         return False
 
 def create_proxy_extension(ip, port, username, password):
-    """Create a Chrome extension for proxy authentication."""
+    """Create a Chrome extension for proxy authentication using Manifest V3."""
     buffer = io.BytesIO()
+    
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        # Updated manifest.json for Manifest V3
         manifest = r'''{
-    "version": "1.0.0",
-    "manifest_version": 2,
-    "name": "Chrome Proxy",
-    "permissions": [
-        "proxy",
-        "webRequest",
-        "webRequestBlocking",
-        "tabs",
-        "storage",
-        "<all_urls>"
-    ],
-    "background": {
-        "scripts": ["background.js"]
-    },
-    "minimum_chrome_version": "76.0.0"
+  "version": "1.0.0",
+  "manifest_version": 3,
+  "name": "Chrome Proxy",
+  "minimum_chrome_version": "108.0.0",
+  "permissions": [
+    "proxy",
+    "storage",
+    "webRequest",
+    "webRequestAuthProvider"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
 }'''
         zipf.writestr("manifest.json", manifest)
-
-        background = f'''var config = {{
+        
+        # background.js as a service worker
+        background = f'''// Apply proxy settings
+chrome.proxy.settings.set({{
+  value: {{
     mode: "fixed_servers",
     rules: {{
-        singleProxy: {{
-            scheme: "http",
-            host: "{ip}",
-            port: parseInt("{port}")
-        }},
-        bypassList: ["localhost"]
+      singleProxy: {{
+        scheme: "http",
+        host: "{ip}",
+        port: parseInt("{port}")
+      }},
+      bypassList: ["localhost"]
     }}
-}};
+  }},
+  scope: "regular"
+}}, () => console.log("Proxy settings applied"));
 
-chrome.proxy.settings.set({{ value: config, scope: "regular" }}, function() {{
-    console.log("Proxy settings applied");
-}});
-
+// Handle proxy authentication without popup
 chrome.webRequest.onAuthRequired.addListener(
-    function(details) {{
-        return {{
-            authCredentials: {{
-                username: "{username}",
-                password: "{password}"
-            }}
-        }};
-    }},
-    {{ urls: ["<all_urls>"] }},
-    ["blocking"]
-);'''
+  (details, callback) => {{
+    callback({{
+      authCredentials: {{
+        username: "{username}",
+        password: "{password}"
+      }}
+    }});
+  }},
+  {{ urls: ["<all_urls>"] }},
+  ["asyncBlocking"]
+);
+'''
         zipf.writestr("background.js", background)
+    
     return base64.b64encode(buffer.getvalue()).decode()
 
 def read_json_file(file_path, max_retries=3):
@@ -543,8 +550,8 @@ def initialize_driver(chrome_options, index):
             os.environ["CHROMEDRIVER_PORT"] = unique_port
             print(f"[INFO] Using CHROMEDRIVER_PORT: {unique_port}")
 
-            chrome_service = Service(executable_path='./chromedriver',port=unique_port)
-            driver = webdriver.Chrome(options=chrome_options)
+            chrome_service = ChromeService(executable_path='./chromedriver',port=unique_port)
+            driver = webdriver.Chrome(service=chrome_service,options=chrome_options)
             driver.set_page_load_timeout(DRIVER_INIT_TIMEOUT)
 
             # Register with browser manager

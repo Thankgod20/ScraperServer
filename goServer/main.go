@@ -50,13 +50,15 @@ type Transfer struct {
 }
 
 type Address struct {
-	Address string `json:"address"`
-	Name    string `json:"name"`
-	Symbol  string `json:"symbol"`
-	Index   int64  `json:"index"`
+	Address string     `json:"address"`
+	Name    string     `json:"name"`
+	Symbol  string     `json:"symbol"`
+	Index   int64      `json:"index"`
+	AddedAt *time.Time `json:"added_at"`
 }
 type Cookies struct {
-	Address string `json:"cookies"`
+	AuthToken string `json:"auth_token"`
+	Ct0       string `json:"ct0"`
 }
 type Proxy struct {
 	Address string `json:"proxies"`
@@ -435,7 +437,7 @@ func addMigratedTokenToAddresses(event MigrationEvent) error {
 	} else {
 		addresses = []Address{}
 	}
-	if int64(len(addresses))+50 < 50 {
+	if int64(len(addresses)) < 25 {
 		// Check for duplicates.
 		for _, addr := range addresses {
 			if strings.EqualFold(addr.Address, event.Mint) {
@@ -452,14 +454,18 @@ func addMigratedTokenToAddresses(event MigrationEvent) error {
 		}
 
 		newIndex := int64(len(addresses))
-		if newIndex > 9 {
-			newIndex = int64(len(addresses)) % 10
+		if newIndex > 4 {
+			newIndex = int64(len(addresses)) % 5
 		}
+		// Record addition time
+		now := time.Now().UTC()
+		fmt.Println("Time Now", now)
 		newAddress := Address{
 			Address: event.Mint,
 			Name:    metadata.Name,
 			Symbol:  metadata.Symbol,
 			Index:   newIndex,
+			AddedAt: &now,
 		}
 		addresses = append(addresses, newAddress)
 		os.MkdirAll(filepath.Dir(addressesFile), os.ModePerm)
@@ -598,116 +604,145 @@ func addProxiesHandler(w http.ResponseWriter, r *http.Request) {
 func addCookiesHandler(w http.ResponseWriter, r *http.Request) {
 	outputPath := filepath.Join("..", "datacenter", "cookies.json")
 	var cookies []Cookies
+
+	// Load existing cookies.json if present
 	if data, err := ioutil.ReadFile(outputPath); err == nil {
-		json.Unmarshal(data, &cookies)
+		err = json.Unmarshal(data, &cookies)
+		if err != nil {
+			http.Error(w, "Error parsing existing JSON", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	if r.Method == http.MethodPost {
+		// Parse form values
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Failed to parse form", http.StatusBadRequest)
 			return
 		}
+
 		action := r.FormValue("action")
 		switch action {
-		case "add":
-			newCookiesText := r.FormValue("newCookies")
-			lines := strings.Split(newCookiesText, "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line != "" {
-					cookies = append(cookies, Cookies{Address: line})
-				}
+		case "add", "edit":
+			// Update both fields
+			authToken := strings.TrimSpace(r.FormValue("auth_token"))
+			ct0 := strings.TrimSpace(r.FormValue("ct0"))
+			if authToken == "" || ct0 == "" {
+				http.Error(w, "Both auth_token and ct0 are required", http.StatusBadRequest)
+				return
 			}
-		case "edit":
-			indexStr := r.FormValue("index")
-			newCookie := strings.TrimSpace(r.FormValue("cookie"))
-			index, err := strconv.Atoi(indexStr)
-			if err == nil && index >= 0 && index < len(cookies) && newCookie != "" {
-				cookies[index].Address = newCookie
-			}
+			cookies = append(cookies, Cookies{AuthToken: authToken, Ct0: ct0})
+
 		case "delete":
+			// Clear the JSON
 			indexStr := r.FormValue("index")
 			index, err := strconv.Atoi(indexStr)
 			if err == nil && index >= 0 && index < len(cookies) {
 				cookies = append(cookies[:index], cookies[index+1:]...)
 			}
+			//cookies = []Cookies{}
+
 		default:
 			http.Error(w, "Unknown action", http.StatusBadRequest)
 			return
 		}
+
+		// Ensure directory exists
 		os.MkdirAll(filepath.Dir(outputPath), os.ModePerm)
+
+		// Write updated JSON
 		file, err := os.Create(outputPath)
 		if err != nil {
 			http.Error(w, "Error updating file", http.StatusInternalServerError)
 			return
 		}
 		defer file.Close()
+
 		encoder := json.NewEncoder(file)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(cookies); err != nil {
 			http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
 			return
 		}
+
+		// Redirect to refresh page
 		http.Redirect(w, r, "/add-cookies", http.StatusSeeOther)
 		return
 	}
 
+	// Render the HTML form
+	// Render HTML form
 	w.Header().Set("Content-Type", "text/html")
 	html := `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Manage Cookies</title>
+  <title>Manage Cookies Array</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
-    textarea { width: 100%; height: 100px; }
-    input[type="text"] { width: 300px; }
+    input[type="text"] { width: 400px; margin-bottom: 10px; }
+    button { margin-top: 10px; padding: 6px 12px; }
     table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th, td { border: 1px solid #ccc; padding: 8px; }
     th { background-color: #f2f2f2; }
     form.inline { display: inline; }
-    button { margin: 2px; }
   </style>
 </head>
 <body>
-  <h1>Manage Cookies</h1>
-  <h2>Add New Cookies</h2>
+  <h1>Manage Cookies Array JSON</h1>
+
+  <h2>Add New Entry</h2>
   <form method="POST" action="/add-cookies">
-    <textarea name="newCookies" placeholder="Enter cookies, one per line"></textarea><br>
+    <div>
+      <label for="auth_token">Auth Token:</label><br>
+      <input type="text" id="auth_token" name="auth_token" required>
+    </div>
+    <div>
+      <label for="ct0">ct0:</label><br>
+      <input type="text" id="ct0" name="ct0" required>
+    </div>
     <input type="hidden" name="action" value="add">
-    <button type="submit">Add Cookies</button>
+    <button type="submit">Add</button>
   </form>
-  <h2>Current Cookies</h2>
+
+  <h2>Current Entries</h2>
   <table>
-    <tr>
-      <th>#</th>
-      <th>Cookie</th>
-      <th>Actions</th>
-    </tr>`
-	for i, cookie := range cookies {
-		html += fmt.Sprintf(`<tr>
-      <td>%d</td>
-      <td>
-        <form method="POST" action="/add-cookies" class="inline">
-          <input type="text" name="cookie" value="%s" required>
-          <input type="hidden" name="index" value="%d">
-          <input type="hidden" name="action" value="edit">
-          <button type="submit">Update</button>
-        </form>
-      </td>
-      <td>
-        <form method="POST" action="/add-cookies" class="inline">
-          <input type="hidden" name="index" value="%d">
-          <input type="hidden" name="action" value="delete">
-          <button type="submit" onclick="return confirm('Delete this cookie?');">Delete</button>
-        </form>
-      </td>
-    </tr>`, i, cookie.Address, i, i)
-	}
-	html += `</table>
+    <tr><th>#</th><th>Auth Token</th><th>ct0</th><th>Actions</th></tr>` + renderRows(cookies) + `
+  </table>
 </body>
 </html>`
+
 	w.Write([]byte(html))
+}
+func renderRows(cookies []Cookies) string {
+	rows := ""
+	for i, c := range cookies {
+		rows += fmt.Sprintf(`
+<tr>
+  <td>%d</td>
+  <td><form method="POST" action="/add-cookies" class="inline">
+      <input type="text" name="auth_token" value="%s" required>
+      <input type="text" name="ct0" value="%s" required>
+      <input type="hidden" name="index" value="%d">
+      <input type="hidden" name="action" value="edit">
+      <button type="submit">Update</button>
+    </form></td>
+  <td>
+    <form method="POST" action="/add-cookies" class="inline">
+      <input type="hidden" name="index" value="%d">
+      <input type="hidden" name="action" value="delete">
+      <button type="submit" onclick="return confirm('Delete this entry?');">Delete</button>
+    </form>
+  </td>
+</tr>`, i, c.AuthToken, c.Ct0, i, i)
+	}
+	return rows
+}
+
+// Helper to preview JSON in the page
+func toJSONPreview(c Cookies) string {
+	data, _ := json.MarshalIndent(c, "", "  ")
+	return string(data)
 }
 
 func addAddressHandler(w http.ResponseWriter, r *http.Request) {
@@ -734,11 +769,13 @@ func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 					if err != nil {
 						metadata = &TokenMetadata{Name: "", Symbol: "", URI: ""}
 					}
+					now := time.Now().UTC()
 					addresses = append(addresses, Address{
 						Address: newAddress,
 						Name:    metadata.Name,
 						Symbol:  metadata.Symbol,
 						Index:   newIndex,
+						AddedAt: &now,
 					})
 				}
 			}
@@ -754,11 +791,13 @@ func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 					if err3 != nil {
 						metadata = &TokenMetadata{Name: "", Symbol: "", URI: ""}
 					}
+					now := time.Now().UTC()
 					addresses[row] = Address{
 						Address: newAddress,
 						Name:    metadata.Name,
 						Symbol:  metadata.Symbol,
 						Index:   newIndex,
+						AddedAt: &now,
 					}
 				}
 			}
@@ -955,6 +994,104 @@ func withCORSStat(handler http.Handler) http.Handler {
 		handler.ServeHTTP(w, r)
 	})
 }
+func fetchHoldersForAllAddresses() {
+	// path to your addresses file
+	addrFile := filepath.Join("..", "addresses", "address.json")
+
+	// read and parse
+	data, err := ioutil.ReadFile(addrFile)
+	if err != nil {
+		log.Printf("[holders] could not read addresses file: %v", err)
+		return
+	}
+	var addrs []Address
+	if err := json.Unmarshal(data, &addrs); err != nil {
+		log.Printf("[holders] invalid JSON in addresses file: %v", err)
+		return
+	}
+
+	client := holders.NewBitqueryClient()
+	for _, a := range addrs {
+		// get transfers for this mint/address
+		fmt.Println("Getting Holder Info for", a.Address)
+		output, err := client.UpdateAndGetTransfers(a.Address)
+		if err != nil {
+			log.Printf("[holders] error fetching for %s: %v", a.Address, err)
+			continue
+		}
+		// optionally unmarshal and log length
+		var transfers []Transfer
+		if err := json.Unmarshal([]byte(output), &transfers); err != nil {
+			log.Printf("[holders] invalid JSON for %s: %v", a.Address, err)
+		} else {
+			log.Printf("[holders] fetched %d transfers for %s", len(transfers), a.Address)
+		}
+
+		// store raw JSON in Redis under "holders:<mint>"
+		/*
+			key := fmt.Sprintf("holders:%s", a.Address)
+			if err := RedisClient.Set(key, output, 0).Err(); err != nil {
+				log.Printf("[holders] failed to save to Redis for %s: %v", a.Address, err)
+			}*/
+		time.Sleep(3 * time.Second)
+	}
+}
+
+// periodicHolderUpdater starts a ticker that fires every interval d.
+func periodicHolderUpdater(d time.Duration) {
+	fmt.Println("======== Getting Holders ============")
+	ticker := time.NewTicker(d)
+	defer ticker.Stop()
+
+	// run once immediately
+	fetchHoldersForAllAddresses()
+
+	for range ticker.C {
+		fetchHoldersForAllAddresses()
+	}
+}
+
+type HolderSnapshot struct {
+	Holders int    `json:"holders"`
+	Time    string `json:"time"`
+}
+
+// getHolderSnapshotsHandler handles HTTP requests to retrieve holder snapshots.
+func getHolderSnapshotsHandler(w http.ResponseWriter, r *http.Request) {
+	// Extract the token address from query parameters
+	tokenAddress := r.URL.Query().Get("address")
+	if tokenAddress == "" {
+		http.Error(w, "Missing 'address' query parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Construct the Redis key
+	redisKey := fmt.Sprintf("token:%s:holdersplot", tokenAddress)
+
+	// Retrieve the JSON array from Redis
+	val, err := RedisClient.Get(redisKey).Result()
+	if err == redis.Nil {
+		http.Error(w, "No data found for the given address", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, fmt.Sprintf("Error retrieving data from Redis: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Unmarshal the JSON array into a slice of HolderSnapshot
+	var snapshots []HolderSnapshot
+	if err := json.Unmarshal([]byte(val), &snapshots); err != nil {
+		http.Error(w, fmt.Sprintf("Error unmarshaling JSON: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Set response headers and write the JSON response
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(snapshots); err != nil {
+		http.Error(w, fmt.Sprintf("Error encoding JSON response: %v", err), http.StatusInternalServerError)
+		return
+	}
+}
 
 // ----------------------
 // Main Function
@@ -963,6 +1100,7 @@ func withCORSStat(handler http.Handler) http.Handler {
 func main() {
 	// Start migration subscription in a goroutine.
 	go subscribeMigration()
+	go periodicHolderUpdater(2 * time.Minute)
 
 	http.HandleFunc("/saveData", withCORS(saveDataHandler))
 	http.HandleFunc("/tweet", withCORS(tweetHandler))
@@ -974,6 +1112,7 @@ func main() {
 	http.HandleFunc("/add-cookies", withCORS(addCookiesHandler))
 	http.HandleFunc("/add-address", withCORS(addAddressHandler))
 	http.HandleFunc("/session-status", withCORS(readSessionStatusHandler))
+	http.HandleFunc("/api/holder-snapshots", withCORS(getHolderSnapshotsHandler))
 
 	staticPath := filepath.Join("..", "static")
 	fs := http.FileServer(http.Dir(staticPath))

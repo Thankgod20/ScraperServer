@@ -332,7 +332,7 @@ func (c *BitqueryClient) UpdateAndGetTransfers(tokenAddress string) (string, err
 	poolID, _ := getPoolID(tokenAddress)
 	fmt.Println("Pool ID", poolID)
 	// Build the GeckoTerminal API URL.
-	gtURL := "https://api.geckoterminal.com/api/v2/networks/solana/pools/" + poolID + "/trades?trade_volume_in_usd_greater_than=1000"
+	gtURL := "https://api.geckoterminal.com/api/v2/networks/solana/pools/" + poolID + "/trades?trade_volume_in_usd_greater_than=100"
 	// You could append additional query parameters like fileLimit if the API supports it.
 
 	req, err := http.NewRequest("GET", gtURL, nil)
@@ -429,7 +429,7 @@ func (c *BitqueryClient) UpdateAndGetTransfers(tokenAddress string) (string, err
 	}
 	fmt.Println("Current amount", currentAmounts)*/
 
-	holderBalances := GetCurrentHolders(tokenAddress)
+	holderBalances := GetCurrentHolders(tokenAddress, rdb)
 	//fmt.Println("Holder Details", holderBalances)
 	// Update amounts in unionMap using on-chain values
 	for addr, amount := range holderBalances {
@@ -483,7 +483,7 @@ func decodeAmount(data []byte) uint64 {
 }
 
 // CurrentHolder returns the current on‑chain token holders for the given token.
-func CurrentHolder(token string) rpc.GetProgramAccountsResult {
+func CurrentHolder(token string, rds *redis.Client) rpc.GetProgramAccountsResult {
 	quickNodeEndpoint := "https://sleek-wandering-tab.solana-mainnet.quiknode.pro/e5f4c26cc15290eda8ae67162a31a0070cf192d6"
 
 	jsonrpcClient := jsonrpc.NewClient(quickNodeEndpoint)
@@ -518,8 +518,13 @@ func CurrentHolder(token string) rpc.GetProgramAccountsResult {
 	return accounts
 }
 
+type HolderSnapshot struct {
+	Holders int    `json:"holders"`
+	Time    string `json:"time"`
+}
+
 // GetCurrentHolders returns a map of wallet addresses to token balances for the given token
-func GetCurrentHolders(tokenAddress string) map[string]float64 {
+func GetCurrentHolders(tokenAddress string, rds *redis.Client) map[string]float64 {
 	quickNodeEndpoint := "https://sleek-wandering-tab.solana-mainnet.quiknode.pro/e5f4c26cc15290eda8ae67162a31a0070cf192d6"
 
 	jsonrpcClient := jsonrpc.NewClient(quickNodeEndpoint)
@@ -583,7 +588,54 @@ func GetCurrentHolders(tokenAddress string) map[string]float64 {
 		// Add to our holders map, combining amounts if wallet has multiple token accounts
 		holderBalances[owner] += amount
 	}
+	holderCount := len(holderBalances)
 
+	// Get current UTC time in RFC3339 format
+	currentTime := time.Now().UTC().Format(time.RFC3339)
+
+	// Create the snapshot
+	snapshot := HolderSnapshot{
+		Holders: holderCount,
+		Time:    currentTime,
+	}
+
+	// Define the Redis key
+	redisKey := fmt.Sprintf("token:%s:holdersplot", tokenAddress)
+
+	// Check if the key exists in Redis.
+	exists, err := rds.Exists(redisKey).Result()
+	if err != nil {
+		log.Printf("failed to check if key exists in Redis: %v", err)
+	}
+
+	var snapshots []HolderSnapshot
+
+	if exists == 1 {
+		// Key exists; retrieve existing snapshots.
+		val, err := rds.Get(redisKey).Result()
+		if err != nil {
+			log.Printf("failed to get existing snapshots from Redis: %v", err)
+		}
+
+		// Unmarshal the existing JSON array into the snapshots slice.
+		if err := json.Unmarshal([]byte(val), &snapshots); err != nil {
+			log.Printf("failed to unmarshal existing snapshots: %v", err)
+		}
+	}
+
+	// Append the new snapshot to the slice.
+	snapshots = append(snapshots, snapshot)
+
+	// Marshal the updated snapshots slice to JSON.
+	jsonData, err := json.Marshal(snapshots)
+	if err != nil {
+		log.Printf("failed to marshal snapshots to JSON: %v", err)
+	}
+
+	// Store the updated JSON array back to Redis.
+	if err := rds.Set(redisKey, jsonData, 0).Err(); err != nil {
+		log.Printf("failed to store snapshots in Redis: %v", err)
+	}
 	return holderBalances
 }
 
