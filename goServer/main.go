@@ -50,11 +50,12 @@ type Transfer struct {
 }
 
 type Address struct {
-	Address string     `json:"address"`
-	Name    string     `json:"name"`
-	Symbol  string     `json:"symbol"`
-	Index   int64      `json:"index"`
-	AddedAt *time.Time `json:"added_at"`
+	Address      string     `json:"address"`
+	Name         string     `json:"name"`
+	Symbol       string     `json:"symbol"`
+	Index        int64      `json:"index"`
+	AddedAt      *time.Time `json:"added_at"`
+	LastActivity *time.Time `json:"last_activity"`
 }
 type Cookies struct {
 	AuthToken string `json:"auth_token"`
@@ -461,11 +462,12 @@ func addMigratedTokenToAddresses(event MigrationEvent) error {
 		now := time.Now().UTC()
 		fmt.Println("Time Now", now)
 		newAddress := Address{
-			Address: event.Mint,
-			Name:    metadata.Name,
-			Symbol:  metadata.Symbol,
-			Index:   newIndex,
-			AddedAt: &now,
+			Address:      event.Mint,
+			Name:         metadata.Name,
+			Symbol:       metadata.Symbol,
+			Index:        newIndex,
+			AddedAt:      &now,
+			LastActivity: &now,
 		}
 		addresses = append(addresses, newAddress)
 		os.MkdirAll(filepath.Dir(addressesFile), os.ModePerm)
@@ -771,11 +773,12 @@ func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 					}
 					now := time.Now().UTC()
 					addresses = append(addresses, Address{
-						Address: newAddress,
-						Name:    metadata.Name,
-						Symbol:  metadata.Symbol,
-						Index:   newIndex,
-						AddedAt: &now,
+						Address:      newAddress,
+						Name:         metadata.Name,
+						Symbol:       metadata.Symbol,
+						Index:        newIndex,
+						AddedAt:      &now,
+						LastActivity: &now,
 					})
 				}
 			}
@@ -793,11 +796,12 @@ func addAddressHandler(w http.ResponseWriter, r *http.Request) {
 					}
 					now := time.Now().UTC()
 					addresses[row] = Address{
-						Address: newAddress,
-						Name:    metadata.Name,
-						Symbol:  metadata.Symbol,
-						Index:   newIndex,
-						AddedAt: &now,
+						Address:      newAddress,
+						Name:         metadata.Name,
+						Symbol:       metadata.Symbol,
+						Index:        newIndex,
+						AddedAt:      &now,
+						LastActivity: &now,
 					}
 				}
 			}

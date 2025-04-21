@@ -831,9 +831,15 @@ async def process_tweets(index, cookies, result_queue,ip_address,port_str,proxy_
                     for item in unmatched_queries:
                         query_queue.put(item)
                     unmatched_queries.clear()
-                    
+            
                 # Prune stale: held >3h AND no tweets in last 1h
-                now = datetime.datetime.utcnow()
+                for e in query_array:
+                    if isinstance(e['added_at'], str):
+                        e['added_at'] = datetime.datetime.fromisoformat(e['added_at'].replace('Z', '+00:00'))
+                    if isinstance(e['last_activity'], str):
+                        e['last_activity'] = datetime.datetime.fromisoformat(e['last_activity'].replace('Z', '+00:00'))
+
+                now = datetime.datetime.now(datetime.timezone.utc)
                 before = len(query_array)
                 query_array[:] = [e for e in query_array if not (
                     now - e['added_at'] > datetime.timedelta(hours=3)
