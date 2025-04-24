@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"github.com/go-redis/redis"
 	"github.com/gorilla/websocket"
 	holders "github.com/thankgod20/scraperServer/Holders"
+	notity "github.com/thankgod20/scraperServer/Notification"
 )
 
 const (
@@ -56,6 +59,12 @@ type Address struct {
 	Index        int64      `json:"index"`
 	AddedAt      *time.Time `json:"added_at"`
 	LastActivity *time.Time `json:"last_activity"`
+}
+type Session struct {
+	ID      int    `json:"id"`
+	Port    int    `json:"port"`
+	Status  string `json:"status"`
+	Updated string `json:"updated"`
 }
 type Cookies struct {
 	AuthToken string `json:"auth_token"`
@@ -430,6 +439,7 @@ func subscribeMigration() {
 }
 
 // addMigratedTokenToAddresses reads the current addresses file and appends the new token if not already present.
+/*
 func addMigratedTokenToAddresses(event MigrationEvent) error {
 	addressesFile := filepath.Join("..", "addresses", "address.json")
 	var addresses []Address
@@ -482,6 +492,131 @@ func addMigratedTokenToAddresses(event MigrationEvent) error {
 		return encoder.Encode(addresses)
 	}
 	return nil
+}
+*/
+
+func addMigratedTokenToAddresses(event MigrationEvent) error {
+	addressesFile := filepath.Join("..", "addresses", "address.json")
+	var addresses []Address
+
+	// Read existing addresses
+	if data, err := ioutil.ReadFile(addressesFile); err == nil {
+		json.Unmarshal(data, &addresses)
+	} else {
+		addresses = []Address{}
+	}
+
+	if int64(len(addresses)) < 25 {
+		// Check for duplicates
+		for _, addr := range addresses {
+			if strings.EqualFold(addr.Address, event.Mint) {
+				log.Println("Token already exists in addresses:", event.Mint)
+				return nil
+			}
+		}
+
+		// Fetch token metadata
+		metadata, err := getTokenMetadataFromAPI(event.Mint)
+		if err != nil {
+			log.Println("Failed to get metadata for", event.Mint, err)
+			metadata = &TokenMetadata{Name: "", Symbol: "", URI: ""}
+		}
+
+		newIndex := int64(len(addresses))
+		if newIndex > 4 {
+			newIndex = int64(len(addresses)) % 5
+		}
+
+		// Record addition time
+		now := time.Now().UTC()
+		newAddress := Address{
+			Address:      event.Mint,
+			Name:         metadata.Name,
+			Symbol:       metadata.Symbol,
+			Index:        newIndex,
+			AddedAt:      &now,
+			LastActivity: &now,
+		}
+
+		addresses = append(addresses, newAddress)
+		os.MkdirAll(filepath.Dir(addressesFile), os.ModePerm)
+		file, err := os.Create(addressesFile)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		encoder := json.NewEncoder(file)
+		encoder.SetIndent("", "  ")
+
+		return encoder.Encode(addresses)
+	}
+
+	// If addresses are 25 or more, read activesession.json
+	sessionsFile := filepath.Join("..", "datacenter", "activesession.json")
+	data, err := ioutil.ReadFile(sessionsFile)
+	if err != nil {
+		return err
+	}
+
+	var sessions []Session
+	if err := json.Unmarshal(data, &sessions); err != nil {
+		return err
+	}
+
+	for _, session := range sessions {
+		if strings.Contains(session.Status, "ArraySize") {
+			arraySize, err := extractArraySize(session.Status)
+			if err != nil {
+				continue
+			}
+
+			if arraySize < 5 {
+				// Fetch token metadata
+				metadata, err := getTokenMetadataFromAPI(event.Mint)
+				if err != nil {
+					log.Println("Failed to get metadata for", event.Mint, err)
+					metadata = &TokenMetadata{Name: "", Symbol: "", URI: ""}
+				}
+
+				// Record addition time
+				now := time.Now().UTC()
+				newAddress := Address{
+					Address:      event.Mint,
+					Name:         metadata.Name,
+					Symbol:       metadata.Symbol,
+					Index:        int64(session.ID),
+					AddedAt:      &now,
+					LastActivity: &now,
+				}
+
+				addresses = append(addresses, newAddress)
+				os.MkdirAll(filepath.Dir(addressesFile), os.ModePerm)
+				file, err := os.Create(addressesFile)
+				if err != nil {
+					return err
+				}
+				defer file.Close()
+				encoder := json.NewEncoder(file)
+				encoder.SetIndent("", "  ")
+
+				return encoder.Encode(addresses)
+			}
+		}
+	}
+
+	return errors.New("no suitable session found to add the new address")
+}
+
+// Helper function to extract ArraySize value from status string
+func extractArraySize(status string) (int, error) {
+	re := regexp.MustCompile(`ArraySize\s+(\d+)`)
+	matches := re.FindStringSubmatch(status)
+	if len(matches) < 2 {
+		return 0, errors.New("ArraySize not found in status")
+	}
+	var size int
+	fmt.Sscanf(matches[1], "%d", &size)
+	return size, nil
 }
 
 // ----------------------
@@ -1096,6 +1231,51 @@ func getHolderSnapshotsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
+func notiFy() {
+	// Create auth client
+	auth := notity.NewTwitterCookieAuth(true, "https://185.236.95.42:6003:uyxzmtjn:ietipyjz5ls7", "")
+
+	// Set cookies (these would need to be obtained from a browser or login process)
+	cookies := map[string]string{
+		"auth_token": "f9f0852d19d256ac472de5906a8bc19495ac3fcd",
+		"ct0":        "f9ea021bf95dddddb05154a8437a4e49a192502307da1b39632e3709a171722fbf9bf5e224b215a6348d563e16a131b59822a48098e5729d01f30449c99d56a73b4424ef65873be347bc1c3002164687",
+		// Add other required cookies
+	}
+
+	auth.SetCookies(cookies)
+
+	// Create notification system
+	//notifier := notity.NewNotificationSystem(auth, 3600) // Minimum 1 hour between notifications
+
+	// Example address and metadata
+	address := "0x123456789abcdef"
+	symbol := "ETH"
+
+	// In a real application, you'd have a monitoring loop
+	//ctx := context.Background()
+	addresses, err := notity.FetchAddresses("localhost") //fetchAddresses(hostname)
+	if err != nil {
+		panic(err)
+	}
+	ticker := time.NewTicker(60 * time.Second) // time.NewTicker sets up a periodic ticker :contentReference[oaicite:8]{index=8}
+	defer ticker.Stop()
+	// Mock impressions data
+	for range ticker.C {
+		for _, addr := range addresses {
+			impressions, _ := notity.FetchAndProcessImpressions(addr.Address)
+			fmt.Println("==== Impression====", impressions, address, symbol)
+		}
+	}
+	// Set threshold to trigger notification at 1000 new views
+	/*sent, err := notifier.TriggerAlert(ctx, address, symbol, impressions, 1000)
+	if err != nil {
+		fmt.Printf("Error triggering alert: %v\n", err)
+	} else if sent {
+		fmt.Println("Alert notification sent successfully!")
+	} else {
+		fmt.Println("No alert triggered (threshold not met or too soon)")
+	}*/
+}
 
 // ----------------------
 // Main Function
@@ -1105,7 +1285,7 @@ func main() {
 	// Start migration subscription in a goroutine.
 	go subscribeMigration()
 	go periodicHolderUpdater(2 * time.Minute)
-
+	go notiFy()
 	http.HandleFunc("/saveData", withCORS(saveDataHandler))
 	http.HandleFunc("/tweet", withCORS(tweetHandler))
 	http.HandleFunc("/tweeturl", withCORS(tweetURLHandler))

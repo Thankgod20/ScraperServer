@@ -833,7 +833,9 @@ async def process_tweets(index, cookies, result_queue,ip_address,port_str,proxy_
                     unmatched_queries.clear()
             
                 # Prune stale: held >3h AND no tweets in last 1h
+                
                 for e in query_array:
+                    print(f"[Client {index}] Tweet Latest Time B4 Prune: {query_array[iteration]['last_activity']} {query_array[iteration]['address']}")
                     if isinstance(e['added_at'], str):
                         e['added_at'] = datetime.datetime.fromisoformat(e['added_at'].replace('Z', '+00:00'))
                     if isinstance(e['last_activity'], str):
@@ -842,12 +844,13 @@ async def process_tweets(index, cookies, result_queue,ip_address,port_str,proxy_
                 now = datetime.datetime.now(datetime.timezone.utc)
                 before = len(query_array)
                 query_array[:] = [e for e in query_array if not (
-                    now - e['added_at'] > datetime.timedelta(hours=3)
-                    and now - e['last_activity'] > datetime.timedelta(hours=1)
+                    #now - e['added_at'] > datetime.timedelta(hours=3) and
+                     now - e['last_activity'] > datetime.timedelta(hours=1)
                 )]
                 if len(query_array) < before:
-                    print(f"[INFO] Pruned {before-len(query_array)} stale entries at {now.isoformat()}")
-
+                    print(f"[INFO][Client {index}] Pruned {before-len(query_array)} Interation value {iteration} stale entries at {now.isoformat()}")
+                    iteration = len(query_array)-1
+                    
                 # Process queries
                 if len(query_array) > 0:
                     print(f"[INFO] [Client {index}] Full Query Array: {query_array} Processing")
@@ -898,7 +901,8 @@ async def process_tweets(index, cookies, result_queue,ip_address,port_str,proxy_
                     else:
                         print(f"[WARNING] [Client {index}] No tweets found or search failed")
                         result_queue.put({"index": index, "success": False, "error": "No tweets found"})
-                
+                else:
+                    print(f"[Client {index}] Empty Array")
                 # Increment iteration counters
                 iteration += 1
                 itt += 1
