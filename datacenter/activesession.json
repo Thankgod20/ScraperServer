@@ -1,32 +1,32 @@
 [
   {
     "id": 0,
-    "port": 58163,
-    "status": "Searching Count: 2 of ArraySize 5 Total Iteration 232 [Top]",
-    "updated": "2025-04-25T00:31:41.547470"
+    "port": 0,
+    "status": "SHUTDOWN",
+    "updated": "2025-05-01T16:13:54.511558"
   },
   {
     "id": 1,
-    "port": 39577,
-    "status": "Searching Count: 1 of ArraySize 3 Total Iteration 144 [Top]",
-    "updated": "2025-04-25T00:31:18.055617"
+    "port": 0,
+    "status": "END",
+    "updated": "2025-05-01T16:13:53.977745"
   },
   {
     "id": 2,
-    "port": 31202,
-    "status": "Searching Count: 1 of ArraySize 5 Total Iteration 206 [Top]",
-    "updated": "2025-04-25T00:31:17.682134"
+    "port": 0,
+    "status": "END",
+    "updated": "2025-05-01T16:13:29.116981"
   },
   {
     "id": 3,
-    "port": 48307,
-    "status": "Searching Count: 3 of ArraySize 4 Total Iteration 304 [Top]",
-    "updated": "2025-04-25T00:30:48.758232"
+    "port": 0,
+    "status": "END",
+    "updated": "2025-05-01T16:13:39.718521"
   },
   {
     "id": 4,
-    "port": 46132,
-    "status": "Searching Count: 2 of ArraySize 3 Total Iteration 284 [Top]",
-    "updated": "2025-04-25T00:30:33.054674"
+    "port": 0,
+    "status": "END",
+    "updated": "2025-05-01T16:13:54.504491"
   }
 ]

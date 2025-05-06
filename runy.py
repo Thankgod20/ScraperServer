@@ -9,10 +9,14 @@ import time
 import queue
 from contextlib import contextmanager
 from typing import Dict, Optional, Any
+import re
 import redis
 import httpx
 import requests
 import asyncio
+from x_client_transaction import ClientTransaction
+from x_client_transaction.utils import handle_x_migration
+import requests
 # --- Global configuration ---
 NGROK_BASE = "http://127.0.0.1:8000"
 NGROK_REDIS = '127.0.0.1'
@@ -289,106 +293,17 @@ class TwitterCookieAuth:
             return resp.status_code == 200
         except Exception:
             return False
-    ''' 
-    async def search_tweets(self, query, index, since_date=None,count: int = 100):
-        """Search tweets using GraphQL API."""
-        if since_date is None:
-            # Get yesterday's date
-            since_date = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    def sanitize_search_query(self, search_query: str) -> str:
+        # Remove 'OR' followed by a standalone '$'
+        search_query = re.sub(r'\bOR\s+\$(?!\w)', '', search_query, flags=re.IGNORECASE)
         
-        print(f"[INFO] [Client {index}] Searching for tweets: {query} since {since_date}")
+        # Remove standalone '$' not followed by word characters
+        search_query = re.sub(r'\$(?!\w)', '', search_query)
         
-        search_query = f"{query} since:{since_date}"
-        
-        if not await self.verify_auth():
-            return None
-
-        # GraphQL operation ID + name for SearchTimeline
-        url = f"{self.GQL_URL}/fL2MBiqXPk5pSrOS5ACLdA/SearchTimeline"
-
-        # Mirror exactly what the browser sends as query params
-        params = {
-            "variables": json.dumps({
-                "rawQuery": search_query,
-                "count": count,
-                "querySource": "recent_search_click",
-                "product": "Latest"
-            }),
-            "features": json.dumps({
-                "rweb_video_screen_enabled": False,
-                "profile_label_improvements_pcf_label_in_post_enabled": True,
-                "rweb_tipjar_consumption_enabled": True,
-                "responsive_web_graphql_exclude_directive_enabled": True,
-                "verified_phone_label_enabled": False,
-                "creator_subscriptions_tweet_preview_api_enabled": True,
-                "responsive_web_graphql_timeline_navigation_enabled": True,
-                "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-                "premium_content_api_read_enabled": False,
-                "communities_web_enable_tweet_community_results_fetch": True,
-                "c9s_tweet_anatomy_moderator_badge_enabled": True,
-                "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
-                "responsive_web_grok_analyze_post_followups_enabled": True,
-                "responsive_web_jetfuel_frame": False,
-                "responsive_web_grok_share_attachment_enabled": True,
-                "articles_preview_enabled": True,
-                "responsive_web_edit_tweet_api_enabled": True,
-                "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-                "view_counts_everywhere_api_enabled": True,
-                "longform_notetweets_consumption_enabled": True,
-                "responsive_web_twitter_article_tweet_consumption_enabled": True,
-                "tweet_awards_web_tipping_enabled": False,
-                "responsive_web_grok_show_grok_translated_post": False,
-                "responsive_web_grok_analysis_button_from_backend": True,
-                "creator_subscriptions_quote_tweet_preview_enabled": False,
-                "freedom_of_speech_not_reach_fetch_enabled": True,
-                "standardized_nudges_misinfo": True,
-                "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-                "longform_notetweets_rich_text_read_enabled": True,
-                "longform_notetweets_inline_media_enabled": True,
-                "responsive_web_grok_image_annotation_enabled": True,
-                "responsive_web_enhance_cards_enabled": False
-            })
-        }
-
-        try:
-            # Use GET + params (not POST)
-            response = await self.client.get(
-                url,
-                headers=self.headers,
-                cookies=self.cookies,
-                params=params
-            )
-            if response.status_code != 200:
-                self._log(f"Failed to search tweets: {response.status_code}")
-                return None
-
-            data = response.json()
-            timeline = (
-                data
-                .get("data", {})
-                .get("search_by_raw_query", {})             # snscrape shows this wrapper :contentReference[oaicite:0]{index=0}
-                .get("search_timeline")                     # then your actual timeline object :contentReference[oaicite:1]{index=1}
-                .get("timeline")                     # then your actual timeline object :contentReference[oaicite:1]{index=1}
-            )
-            
-            instructions = timeline.get("instructions", [])
-            if not instructions:
-                return []
-            #print("Instructions",instructions)
-            entries = instructions[0].get("entries", [])
-            tweet_objs = []
-            for entry in entries:
-                # guard against non‑tweet entries
-                if entry.get("content", {}).get("itemContent", {}).get("tweet_results"):
-                    tweet_objs.append(self.map_entry_to_tweet_obj(entry))
-
-            return tweet_objs
-        except Exception as e:
-            self._log(f"Error during search: {e}")
-            return None
-    '''       
-
-
+        # Normalize whitespace by replacing multiple spaces with a single space
+        search_query = re.sub(r'\s+', ' ', search_query).strip()
+    
+        return search_query
     async def search_tweets(
         self,
         address_query,
@@ -398,7 +313,7 @@ class TwitterCookieAuth:
         index: int,
         since_date: str | None = None,
         per_page: int = 20,
-        max_tweets: int = 50,
+        max_tweets: int = 100,
         pause_seconds: float = 5.0
     ) -> list[dict] | None:
         """Search tweets using GraphQL API with cursor‑based pagination.
@@ -412,14 +327,14 @@ class TwitterCookieAuth:
             since_date = (
                 datetime.datetime.now() - datetime.timedelta(days=1)
             ).strftime("%Y-%m-%d")
-        print(f"[INFO] [Client {index}] Searching for tweets: {query} since {since_date}")
-        search_query = f"{query} since:{since_date}"
-        
+       
+        search_query = self.sanitize_search_query(f"{query} since:{since_date}")
+        print(f"[INFO] [Client {index}] Searching for tweets: {search_query}")
         # 2) Ensure authentication
         if not await self.verify_auth():
             return None
 
-        url = f"{self.GQL_URL}/fL2MBiqXPk5pSrOS5ACLdA/SearchTimeline"
+        url = f"{self.GQL_URL}/AIdc203rPpK_k_2KWSdm7g/SearchTimeline"
         all_tweets: list[dict] = []
         cursor: str | None = None
         time_count = 2 * (iteration + 1)
@@ -467,6 +382,7 @@ class TwitterCookieAuth:
         }
 
         # 4) Loop pages until we hit max_tweets or run out
+        not_found_retries = 0
         while len(all_tweets) < max_tweets:
             vars_payload = base_vars.copy()
             if cursor:
@@ -479,6 +395,24 @@ class TwitterCookieAuth:
             }
             
             try:
+                print(f"[Client {index}] get transaction_id")
+                session = requests.Session()
+                session.headers = self.headers
+                session.proxies = {
+                    "http": self.proxy,
+                    "https": self.proxy
+                }
+                responseX = handle_x_migration(session)
+                print(f"[Client {index}] gotten transaction_id Response")
+                method = "GET"
+                path = "/i/api/graphql/AIdc203rPpK_k_2KWSdm7g/SearchTimeline"
+
+                ct = ClientTransaction(responseX)
+                print(f"[Client {index}] gotten transaction_id Response ct")
+                transaction_id = ct.generate_transaction_id(method=method, path=path)
+
+                print(f"[Client {index}] transaction_id: {transaction_id}")
+                self.headers["x-client-transaction-id"] = transaction_id
                 resp = await self.client.get(
                     url,
                     headers=self.headers,
@@ -486,7 +420,7 @@ class TwitterCookieAuth:
                     params=params
                 )
                 if resp.status_code != 200:
-                    self._log(f"Failed to search tweets: {resp.status_code}")
+                    self._log(f"[Client {index}] Failed to search tweets: {resp.status_code} Address : {address_query}")
                     if resp.status_code == 429:
                         reset_ts = int(resp.headers.get("x-rate-limit-reset", time.time() + pause_seconds))
                         wait_seconds = max(reset_ts - time.time(), pause_seconds)
@@ -494,6 +428,14 @@ class TwitterCookieAuth:
                         await asyncio.sleep(wait_seconds)
                         pause_seconds = min(pause_seconds * 2, 300.0)  # cap at 5 minutes
                         continue
+                    elif resp.status_code == 404:
+                        not_found_retries += 1
+                        if not_found_retries <= 2:
+                            self._log(f"[Client {index}] Got 404, retrying ({not_found_retries}/2)...")
+                            await asyncio.sleep(pause_seconds)
+                            continue
+                        else:
+                            self._log(f"[Client {index}] Got 404 too many times. Exiting.")
                     break
 
                 data = resp.json()
@@ -590,7 +532,7 @@ class TwitterCookieAuth:
                     break
                     
             except Exception as e:
-                self._log(f"Error during search: {str(e)}")
+                self._log(f"[Client {index}] Error during search: {str(e)}")
                 # Continue with next attempt rather than breaking completely
                 await asyncio.sleep(pause_seconds * 10)  # Wait longer after an error
                 continue
@@ -993,9 +935,10 @@ def main():
     update_session_status(0, 0, "NEW")
     user_agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/110.0"
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
     ]
     try:
         index = 0

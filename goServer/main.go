@@ -86,14 +86,23 @@ type MigrationEvent struct {
 	TxType    string `json:"txType"`
 	Pool      string `json:"pool"`
 }
+type HolderData struct {
+	Address string    `json:"address"`
+	Amount  []float64 `json:"amount"`
+	Time    []string  `json:"time"`
+}
+
+type TokenData struct {
+	Holders []HolderData `json:"holders"`
+}
 
 var RedisClient *redis.Client
 
 func init() {
 	RedisClient = redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379", // Update with your Redis server address
-		Password: "",               // Update with your Redis password, if any
-		DB:       0,                // Default DB
+		Addr:     "192.168.8.111:6379", // Update with your Redis server address
+		Password: "",                   // Update with your Redis password, if any
+		DB:       0,                    // Default DB
 	})
 
 	// Test the connection
@@ -1172,6 +1181,69 @@ func fetchHoldersForAllAddresses() {
 			if err := RedisClient.Set(key, output, 0).Err(); err != nil {
 				log.Printf("[holders] failed to save to Redis for %s: %v", a.Address, err)
 			}*/
+		key := fmt.Sprintf("holderhistory:%s", a.Address)
+
+		// Check if the key exists
+		exists, err := RedisClient.Exists(key).Result()
+		if err != nil {
+			log.Printf("[redis] error checking existence of key %s: %v", key, err)
+			continue
+		}
+
+		var tokenData TokenData
+		if exists == 0 {
+			// Key does not exist, create new TokenData
+			tokenData = TokenData{}
+		} else {
+			// Key exists, retrieve existing data
+			res, err := RedisClient.Get(key).Result() //rh.JSONGet(key, ".")
+			if err != nil {
+				log.Printf("[redis] error getting JSON for key %s: %v", key, err)
+				continue
+			}
+			if err := json.Unmarshal([]byte(res), &tokenData); err != nil {
+				log.Printf("[json] error unmarshaling data for key %s: %v", key, err)
+				continue
+			}
+		}
+
+		for _, t := range transfers {
+			// Find if holder already exists
+			found := false
+			for i, holder := range tokenData.Holders {
+				if holder.Address == t.Address {
+					// Append new amount and time
+					tokenData.Holders[i].Amount = append(tokenData.Holders[i].Amount, t.Amount)
+					tokenData.Holders[i].Time = append(tokenData.Holders[i].Time, t.Time.Time.Format(time.RFC3339))
+					found = true
+					break
+				}
+			}
+			if !found {
+				// Add new holder
+				newHolder := HolderData{
+					Address: t.Address,
+					Amount:  []float64{t.Amount},
+					Time:    []string{t.Time.Time.Format(time.RFC3339)},
+				}
+				tokenData.Holders = append(tokenData.Holders, newHolder)
+			}
+		}
+
+		// Set the updated TokenData back to Redis
+		jsonData, err := json.Marshal(tokenData)
+		if err != nil {
+			log.Printf("failed to marshal snapshots to JSON: %v", err)
+		}
+		/*_, err = RedisClient.SET(key, ".", tokenData)
+		if err != nil {
+			log.Printf("[redis] error setting JSON for key %s: %v", key, err)
+			continue
+		}
+		*/
+		if err := RedisClient.Set(key, jsonData, 0).Err(); err != nil {
+			log.Printf("failed to store snapshots in Redis: %v", err)
+		}
 		time.Sleep(3 * time.Second)
 	}
 }
@@ -1260,10 +1332,11 @@ func notiFy() {
 	ticker := time.NewTicker(60 * time.Second) // time.NewTicker sets up a periodic ticker :contentReference[oaicite:8]{index=8}
 	defer ticker.Stop()
 	// Mock impressions data
+
 	for range ticker.C {
 		for _, addr := range addresses {
-			impressions, _ := notity.FetchAndProcessImpressions(addr.Address)
-			fmt.Println("==== Impression====", impressions, address, symbol)
+			//impressions, _ := notity.FetchAndProcessImpressions("localhost", addr.Address)
+			fmt.Println("==== Impression====", addr, address, symbol)
 		}
 	}
 	// Set threshold to trigger notification at 1000 new views

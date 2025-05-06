@@ -1,354 +1,74 @@
 [
   {
-    "address": "7vHd5vuhb18hcEXiXPwNGsJ4YR9RxE1VUEMLgiFipump",
-    "name": "JAIL POPE KWILLER",
-    "symbol": "JAIL JD",
+    "address": "FZf8fLfotxYWCnJkUb8AnKswgUv4sFQMn5UQmQ2dpump",
+    "name": "NEW XAI LLAMA",
+    "symbol": "SOL",
     "index": 0,
-    "added_at": "2025-04-24T19:14:49.901505Z",
-    "last_activity": "2025-04-24T19:14:49.901505Z"
+    "added_at": "2025-05-06T14:31:11.534344Z",
+    "last_activity": "2025-05-06T14:31:11.534344Z"
   },
   {
-    "address": "4WzvDyndZBA6JjBM2V3p57HMuyc1WZXXhP9Bh9nDpump",
-    "name": "USDC",
-    "symbol": "USDC",
+    "address": "D72VwcU3jp8J3bdF5hsrF2XercNU1yqetMtj6T1kpump",
+    "name": "xAI new alpaca",
+    "symbol": "SOL",
     "index": 1,
-    "added_at": "2025-04-24T19:17:23.058204Z",
-    "last_activity": "2025-04-24T19:17:23.058204Z"
+    "added_at": "2025-05-06T14:32:16.298284Z",
+    "last_activity": "2025-05-06T14:32:16.298284Z"
   },
   {
-    "address": "6Dcziw4h3SURvcDmVCdkiNybVXsMnFaD2g4eH6MYpump",
-    "name": "forever alone ",
-    "symbol": "FA",
+    "address": "EJnNFQPwr8eTpWVrUgMJgnqpxJHABM3WqZ9kPFDGpump",
+    "name": "SOL",
+    "symbol": "SOL",
     "index": 2,
-    "added_at": "2025-04-24T19:19:34.140605Z",
-    "last_activity": "2025-04-24T19:19:34.140605Z"
+    "added_at": "2025-05-06T14:33:29.812972Z",
+    "last_activity": "2025-05-06T14:33:29.812972Z"
   },
   {
-    "address": "H7BCEEs2v7xXgtY85e5JxqAardBev2o9j9cjVgxzpump",
-    "name": "dak",
-    "symbol": "dak",
+    "address": "8Mk2n2faLS5K4vmQVU3cYSohwUpxSRYohFKfA4ppump",
+    "name": "Trollbro",
+    "symbol": "Trollbro",
     "index": 3,
-    "added_at": "2025-04-24T19:58:35.621013Z",
-    "last_activity": "2025-04-24T19:58:35.621013Z"
+    "added_at": "2025-05-06T14:34:50.754185Z",
+    "last_activity": "2025-05-06T14:34:50.754185Z"
   },
   {
-    "address": "7ty1xMNfxao7HqHbdiHgxwRDxgzzFYaUFEHLRUfjpump",
-    "name": "KAMPF",
-    "symbol": "KAMPF",
+    "address": "FbC7BZ8wBZi78menTGAFvfuPcUwhRL3pD6VJu23spump",
+    "name": "Moneyfesting",
+    "symbol": "mf",
     "index": 4,
-    "added_at": "2025-04-24T19:59:03.50339Z",
-    "last_activity": "2025-04-24T19:59:03.50339Z"
+    "added_at": "2025-05-06T14:38:49.967444Z",
+    "last_activity": "2025-05-06T14:38:49.967444Z"
   },
   {
-    "address": "ChTfXnJzoEXZAV6rb7SZvAgzdi3NW4DAmRNdkhB5pump",
-    "name": "Dream Writer",
-    "symbol": "WRITER",
-    "index": 0,
-    "added_at": "2025-04-24T20:00:32.943304Z",
-    "last_activity": "2025-04-24T20:00:32.943304Z"
-  },
-  {
-    "address": "Na74XzRBHtr3N87CqQADrG3AZTbJ3D6cxNaaiJXpump",
-    "name": "Bytecoin",
-    "symbol": "BYTE",
-    "index": 1,
-    "added_at": "2025-04-24T20:01:13.575314Z",
-    "last_activity": "2025-04-24T20:01:13.575314Z"
-  },
-  {
-    "address": "HUaFE4ktkrgzwwPqe4SLpiW3Fj538kZkT7UwB3D3pump",
-    "name": "Bit Of A Coin",
-    "symbol": "BOAC",
-    "index": 2,
-    "added_at": "2025-04-24T20:06:32.757907Z",
-    "last_activity": "2025-04-24T20:06:32.757907Z"
-  },
-  {
-    "address": "8rQUqu79piiuMvWvskVLgsrQSCiggKw1u388Y95Spump",
-    "name": "",
-    "symbol": "",
-    "index": 3,
-    "added_at": "2025-04-24T20:08:58.465467Z",
-    "last_activity": "2025-04-24T20:08:58.465467Z"
-  },
-  {
-    "address": "2BaEpYhGyyFqAqsrRuwHWzPP1b4g9ZUXbnokkrSdpump",
-    "name": "Boxo",
-    "symbol": "BOXO",
-    "index": 4,
-    "added_at": "2025-04-24T20:13:16.152029Z",
-    "last_activity": "2025-04-24T20:13:16.152029Z"
-  },
-  {
-    "address": "DYDgBrPswoN9sQo5t711N4xq6EcJFohjhSVKUMz8pump",
+    "address": "FJCqreogmQYoETJK3ngdBKqzCjCWQCF8UMCeDg8Tpump",
     "name": "",
     "symbol": "",
     "index": 0,
-    "added_at": "2025-04-24T20:18:08.827559Z",
-    "last_activity": "2025-04-24T20:18:08.827559Z"
+    "added_at": "2025-05-06T14:48:11.13269Z",
+    "last_activity": "2025-05-06T14:48:11.13269Z"
   },
   {
-    "address": "AtEq9ap8FQXkhQcf537nq67WRd9yRLPhg2yUnUE3pump",
+    "address": "5iisaggJUe7ugF79fLqELEmiwQWPyYhP8A1ocZYh1P5h",
     "name": "",
     "symbol": "",
     "index": 1,
-    "added_at": "2025-04-24T20:19:16.533237Z",
-    "last_activity": "2025-04-24T20:19:16.533237Z"
+    "added_at": "2025-05-06T14:48:21.633897Z",
+    "last_activity": "2025-05-06T14:48:21.633897Z"
   },
   {
-    "address": "6djX5PMWSMoboaEB2GqH92pBeCkGPav2oGi4PEDGpump",
-    "name": "Deal",
-    "symbol": "DEAL",
+    "address": "BxVU995VzqjcjMziYhS7h24n19BdFoUmYeHM7N39pump",
+    "name": "stickwoman",
+    "symbol": "stickwoman",
     "index": 2,
-    "added_at": "2025-04-24T20:21:51.174935Z",
-    "last_activity": "2025-04-24T20:21:51.174935Z"
+    "added_at": "2025-05-06T14:57:47.948006Z",
+    "last_activity": "2025-05-06T14:57:47.948006Z"
   },
   {
-    "address": "8KATqntYpipdzpXuiWie86TeMCwpSHWyuG48PLcxpump",
-    "name": "Hidden USD FA Meme",
-    "symbol": "FAUSD",
+    "address": "4o3uZ5T2C2iGv6XEaoeYVrjCVNLfevCvPCo7Qdatpump",
+    "name": "New Government Dog",
+    "symbol": "Dino",
     "index": 3,
-    "added_at": "2025-04-24T20:22:26.150793Z",
-    "last_activity": "2025-04-24T20:22:26.150793Z"
-  },
-  {
-    "address": "UQb3hmjbJiHNvVRZgrh67vSiuekJ3HbRC3EKkQupump",
-    "name": "",
-    "symbol": "",
-    "index": 4,
-    "added_at": "2025-04-24T20:28:37.816032Z",
-    "last_activity": "2025-04-24T20:28:37.816032Z"
-  },
-  {
-    "address": "BNAZQv4gKSV2oJUmsz4CZShiH4Q3jyd2jWGd95mypump",
-    "name": "Machine Learning Trade System",
-    "symbol": "MLTS",
-    "index": 0,
-    "added_at": "2025-04-24T20:30:55.163025Z",
-    "last_activity": "2025-04-24T20:30:55.163025Z"
-  },
-  {
-    "address": "Ay5gKqXLyrbDCoLEpJyhZ8FBZa6BqNaod971EMD8pump",
-    "name": "Rage Guy",
-    "symbol": "RAGE",
-    "index": 1,
-    "added_at": "2025-04-24T20:32:36.332855Z",
-    "last_activity": "2025-04-24T20:32:36.332855Z"
-  },
-  {
-    "address": "C2QJ28BWAMs7xL5qKjP6Rd6ACqLSeE8APcxvGusNpump",
-    "name": "Orviland",
-    "symbol": "ORVI",
-    "index": 2,
-    "added_at": "2025-04-24T20:33:14.612413Z",
-    "last_activity": "2025-04-24T20:33:14.612413Z"
-  },
-  {
-    "address": "9H7yN7Yoix1eJrfjhmvhwZuEb439nncfZPy9cADnpump",
-    "name": "",
-    "symbol": "",
-    "index": 3,
-    "added_at": "2025-04-24T20:42:57.102045Z",
-    "last_activity": "2025-04-24T20:42:57.102045Z"
-  },
-  {
-    "address": "HphRKHx3UsTrNdT82EmPF3V93Xpnd3JrYEpUnmqqFEC5",
-    "name": "",
-    "symbol": "",
-    "index": 4,
-    "added_at": "2025-04-24T20:43:43.369916Z",
-    "last_activity": "2025-04-24T20:43:43.369916Z"
-  },
-  {
-    "address": "Erfd1CpBeaWGN4wxo6RfaZVW2ist4zLbzna7DuhRpump",
-    "name": "",
-    "symbol": "",
-    "index": 0,
-    "added_at": "2025-04-24T20:44:28.604984Z",
-    "last_activity": "2025-04-24T20:44:28.604984Z"
-  },
-  {
-    "address": "5nFsTYAasYSbYmj9daehdkTBbmS4hmpuz1MbfXSDpump",
-    "name": "TROLLFACE SIGMA BRAINROT SEASON",
-    "symbol": "TSBS",
-    "index": 1,
-    "added_at": "2025-04-24T20:46:42.049247Z",
-    "last_activity": "2025-04-24T20:46:42.049247Z"
-  },
-  {
-    "address": "7QT38Ttp7tUcPgwXn7utTNBfFqQuLCTNgHB7RvF1pump",
-    "name": "religion created by trolls",
-    "symbol": "trollism",
-    "index": 2,
-    "added_at": "2025-04-24T20:47:29.201929Z",
-    "last_activity": "2025-04-24T20:47:29.201929Z"
-  },
-  {
-    "address": "3VjSNgwUMyoGt2HhoNWYMtHeK2BLVDeTasp8FitBpump",
-    "name": "mutumbo ",
-    "symbol": "(MUTUMBO)",
-    "index": 3,
-    "added_at": "2025-04-24T20:47:50.1914Z",
-    "last_activity": "2025-04-24T20:47:50.1914Z"
-  },
-  {
-    "address": "GJ8eQU35fk8UqzqwDM8CBnwRSmVtkVdGHnboUPkSpump",
-    "name": "",
-    "symbol": "",
-    "index": 4,
-    "added_at": "2025-04-24T20:48:27.998859Z",
-    "last_activity": "2025-04-24T20:48:27.998859Z"
-  },
-  {
-    "address": "GuFK1iRQPCSRxPxWhw94SrDtLYaf7oDT68uuDDpjpump",
-    "name": "The Jewish Fakeout",
-    "symbol": "fakeout",
-    "index": 0,
-    "added_at": "2025-04-24T20:54:58.437541Z",
-    "last_activity": "2025-04-24T20:54:58.437541Z"
-  },
-  {
-    "address": "3iDp6xBkkvEvLe9VMbaUfFycEBRDwLi9VZ4kFs37pump",
-    "name": "hellkat AI",
-    "symbol": "hellkat",
-    "index": 3,
-    "added_at": "2025-04-24T21:11:24.040915Z",
-    "last_activity": "2025-04-24T21:11:24.040915Z"
-  },
-  {
-    "address": "66qVZrS4fA1emnpPCWuo5dMRwT5ZXjyjVuRcPxbDpump",
-    "name": "",
-    "symbol": "",
-    "index": 0,
-    "added_at": "2025-04-24T21:23:28.909159Z",
-    "last_activity": "2025-04-24T21:23:28.909159Z"
-  },
-  {
-    "address": "6jo2qfS4StmWTjRi6Nx9ampZxw4TUAPKJDHXK7KNpump",
-    "name": "GREEN LINE THEORY",
-    "symbol": "LINE",
-    "index": 1,
-    "added_at": "2025-04-24T21:27:05.57984Z",
-    "last_activity": "2025-04-24T21:27:05.57984Z"
-  },
-  {
-    "address": "6LYHJpzzXuQyJjb5TAbQPPbyXEusDur2SA5rogVpU5fe",
-    "name": "¯\\_(ツ)_/¯",
-    "symbol": "Shrug",
-    "index": 4,
-    "added_at": "2025-04-24T21:28:30.276343Z",
-    "last_activity": "2025-04-24T21:28:30.276343Z"
-  },
-  {
-    "address": "FFVHFK6NfYat11sfVtZe5aWpjyenQAYuyfPMKuVpump",
-    "name": "xD",
-    "symbol": "xD",
-    "index": 4,
-    "added_at": "2025-04-24T21:30:20.685977Z",
-    "last_activity": "2025-04-24T21:30:20.685977Z"
-  },
-  {
-    "address": "Aq98qrA857XAh6yCTsQmsByaB8vzhUBBUNHsjz8Xpump",
-    "name": "frens",
-    "symbol": "frens",
-    "index": 4,
-    "added_at": "2025-04-24T21:34:29.098813Z",
-    "last_activity": "2025-04-24T21:34:29.098813Z"
-  },
-  {
-    "address": "DBSfihJKzgdq6mhGXXrGferKe9eaCbDv44KjS8kmpump",
-    "name": "Vanry AI",
-    "symbol": "vanry",
-    "index": 4,
-    "added_at": "2025-04-24T21:34:57.077328Z",
-    "last_activity": "2025-04-24T21:34:57.077328Z"
-  },
-  {
-    "address": "D6pNry7TcKrEV3U1gSG3V3Cb6yrC25vLGHbF8wXqx2nA",
-    "name": "FirstMemeEverCreatedbytheBBC",
-    "symbol": "LOOKS",
-    "index": 0,
-    "added_at": "2025-04-24T21:41:38.796668Z",
-    "last_activity": "2025-04-24T21:41:38.796668Z"
-  },
-  {
-    "address": "3949xYesg4re7oNXpchr15Gce4icggpsqHPEiZS8pump",
-    "name": "Lume",
-    "symbol": "lume",
-    "index": 0,
-    "added_at": "2025-04-24T21:45:02.648066Z",
-    "last_activity": "2025-04-24T21:45:02.648066Z"
-  },
-  {
-    "address": "3QXwxvQK7EHR1SwsHXZEraBwL4N1VXcM3ywCP1dqpump",
-    "name": "",
-    "symbol": "",
-    "index": 3,
-    "added_at": "2025-04-24T21:46:00.785473Z",
-    "last_activity": "2025-04-24T21:46:00.785473Z"
-  },
-  {
-    "address": "726N7Bf7TByB7AyQM5JzYyiScXS85mdkChCjReQLpump",
-    "name": "Fat Girl",
-    "symbol": "FATGIRL",
-    "index": 3,
-    "added_at": "2025-04-24T21:46:24.814832Z",
-    "last_activity": "2025-04-24T21:46:24.814832Z"
-  },
-  {
-    "address": "9ZTxFuYMyFb9VSsA1HRWKA2vWYncMAy5cDdYKVFWpump",
-    "name": "Superstitional Realism",
-    "symbol": "WHITE",
-    "index": 4,
-    "added_at": "2025-04-24T21:52:04.507315Z",
-    "last_activity": "2025-04-24T21:52:04.507315Z"
-  },
-  {
-    "address": "Hv6LfseXcrea6AZNgwzFAs4HVUDeiN1gGuFkdzHRpump",
-    "name": "Rufus",
-    "symbol": "RUFF",
-    "index": 4,
-    "added_at": "2025-04-24T21:52:11.38236Z",
-    "last_activity": "2025-04-24T21:52:11.38236Z"
-  },
-  {
-    "address": "8iZYwdBaxetMRMrWvkKttuxfxxXugbEGY6nCK8azpump",
-    "name": "SecretX2",
-    "symbol": "SX2",
-    "index": 0,
-    "added_at": "2025-04-24T22:25:07.19625Z",
-    "last_activity": "2025-04-24T22:25:07.19625Z"
-  },
-  {
-    "address": "7MFb5JEDPE3uKGEoAzyNyPojjtb6JuUti24PGKyeW82u",
-    "name": "nickwifconfused",
-    "symbol": "NICK",
-    "index": 2,
-    "added_at": "2025-04-24T22:26:20.532145Z",
-    "last_activity": "2025-04-24T22:26:20.532145Z"
-  },
-  {
-    "address": "9XKLHwAuZ1P1Au7CxqkC3Gudd4exFFyeVFD28C3Spump",
-    "name": "Rufus",
-    "symbol": "RUFF",
-    "index": 3,
-    "added_at": "2025-04-24T22:29:19.548406Z",
-    "last_activity": "2025-04-24T22:29:19.548406Z"
-  },
-  {
-    "address": "AqAqJvj192BNtcghGSMbdRNtj1FTpDs9g3GVFnAUpump",
-    "name": "SUMMER 2016",
-    "symbol": "2016",
-    "index": 3,
-    "added_at": "2025-04-24T22:48:36.86916Z",
-    "last_activity": "2025-04-24T22:48:36.86916Z"
-  },
-  {
-    "address": "GVtkeGZSVHBMvNbrSMxdLr2mzcQNF7h3TUucmzPQpump",
-    "name": "Todd",
-    "symbol": "TODD",
-    "index": 0,
-    "added_at": "2025-04-24T22:53:04.121701Z",
-    "last_activity": "2025-04-24T22:53:04.121701Z"
+    "added_at": "2025-05-06T14:58:08.007395Z",
+    "last_activity": "2025-05-06T14:58:08.007395Z"
   }
 ]
